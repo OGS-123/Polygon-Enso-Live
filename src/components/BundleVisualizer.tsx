@@ -13,6 +13,7 @@ interface BundleVisualizerProps {
   ltv?: number;
   slippage?: number;
   loops?: number;
+  flashloanProtocol?: 'aave-v3' | 'uniswap-v3';
 }
 
 export const BundleVisualizer: React.FC<BundleVisualizerProps> = ({
@@ -23,29 +24,31 @@ export const BundleVisualizer: React.FC<BundleVisualizerProps> = ({
   ltv = 70,
   slippage = 0.5,
   loops = 1,
+  flashloanProtocol = 'aave-v3',
 }) => {
   const isMultiLoop = loops > 1;
   const isSameToken = flashTokenSymbol.toUpperCase() === collTokenSymbol.toUpperCase();
+  const protocolName = flashloanProtocol === 'aave-v3' ? 'Aave V3' : 'Uniswap V3';
 
   const steps = [
     {
       num: 1,
-      title: 'Uniswap V3 Flashloan',
+      title: `${protocolName} Flashloan`,
       action: 'Borrow Uncollateralized Capital',
-      detail: `Borrow ${flashAmount} ${flashTokenSymbol} from UniV3 pool with zero upfront capital`,
+      detail: `Borrow ${flashAmount} ${flashTokenSymbol} from ${protocolName} with zero upfront capital`,
       icon: Zap,
       color: 'text-amber-400 bg-amber-950/40 border-amber-800/60',
     },
     {
       num: 2,
       title: isSameToken
-        ? 'Direct Supply (Same Asset)'
+        ? 'Direct Supply (Zero Capital)'
         : (isMultiLoop ? `Enso Router: Swap (x${loops} Cycles)` : 'Enso Router: Swap'),
       action: isSameToken
-        ? 'Direct Supply (0% Swap Slippage)'
+        ? 'Direct Flashloan Collateral Supply (Zero Capital)'
         : `Convert Flash Asset (Slippage: ${slippage}%)`,
       detail: isSameToken
-        ? `Flashloan asset (${flashTokenSymbol}) matches collateral asset directly. No DEX swap needed.`
+        ? `Feeds flashloan output directly into collateral deposit. No wallet balance or swap needed.`
         : (isMultiLoop
             ? `Swaps flashloan asset ${flashTokenSymbol} → ${collTokenSymbol}, repeated on each recursive cycle`
             : `Swap ${flashAmount} ${flashTokenSymbol} → ${collTokenSymbol} with ${Math.round(slippage * 100)} BPS slippage protection`),
@@ -56,9 +59,11 @@ export const BundleVisualizer: React.FC<BundleVisualizerProps> = ({
     },
     {
       num: 3,
-      title: 'Enso Check: Balance',
-      action: 'Query Received Balance in Callback',
-      detail: `Inspect token balance of ${collTokenSymbol} dynamically to feed next supply call`,
+      title: isSameToken ? 'Zero-Capital Direct Pipe' : 'Enso Check: Output Buffer',
+      action: isSameToken ? 'Atomic Callback Buffer' : 'Query Received Balance in Callback',
+      detail: isSameToken
+        ? 'Direct pipe connects flashloan output to Aave deposit without pulling funds from user wallet.'
+        : `Inspect token balance of ${collTokenSymbol} dynamically to feed next supply call`,
       icon: GitCommit,
       color: 'text-blue-400 bg-blue-950/40 border-blue-800/60',
     },

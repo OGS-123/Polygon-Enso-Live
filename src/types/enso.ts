@@ -17,9 +17,9 @@ export interface ShortcutItem {
 export interface EnsoBundlePayload {
   chainId: number;
   fromAddress: string;
-  receiver: string;
-  spender: string;
-  routingStrategy: string;
+  receiver?: string;
+  spender?: string;
+  routingStrategy?: string;
   shortcuts: ShortcutItem[];
 }
 

@@ -68,8 +68,8 @@ export function cleanShortcuts(shortcuts: any[]): any[] {
     if (item.args && typeof item.args === 'object') {
       const args = { ...item.args };
 
-      if (item.protocol === 'uniswap-v3' && item.action === 'flashloan') {
-        // Enso requires tokenIn, amountIn, and tokenId to be arrays of matching length
+      if ((item.protocol === 'uniswap-v3' || item.protocol === 'aave-v3') && item.action === 'flashloan') {
+        // Enso requires tokenIn, amountIn to be arrays
         const rawToken = args.tokenIn || args.flashloanToken || args.primaryAddress;
         if (Array.isArray(rawToken)) {
           args.tokenIn = rawToken.map((t: any) => checksumAddressSafe(String(t)) || String(t));
@@ -103,29 +103,38 @@ export function cleanShortcuts(shortcuts: any[]): any[] {
           delete args.tokenId;
         }
 
-        // Safeguard: Ensure primaryAddress (Uniswap V3 pool) contains the borrowed token
-        const currentPool = (args.primaryAddress || '').toLowerCase();
-        const borrowedToken = (args.tokenIn[0] || '').toLowerCase();
-        // 0x45dda9cb7c25131df268515131f647d726f50608 is USDC.e/WETH (does not contain USDT)
-        if (
-          currentPool === '0x45dda9cb7c25131df268515131f647d726f50608' &&
-          borrowedToken === '0xc2132d05d31c914a87c6611c10748aeb04b58e8f'
-        ) {
-          args.primaryAddress = checksumAddressSafe('0xDaC8A8E6DBf8c690ec6815e0fF03491B2770255D');
-        } else if (!args.primaryAddress) {
-          args.primaryAddress = checksumAddressSafe('0xDaC8A8E6DBf8c690ec6815e0fF03491B2770255D');
+        // If receiver was passed for a flashloan that has callbacks, strip it
+        // so the executing Enso Wallet contract retains the flashloaned tokens for the callback deposits
+        if (args.receiver && args.callback && Array.isArray(args.callback) && args.callback.length > 0) {
+          delete args.receiver;
+        }
+
+        if (item.protocol === 'aave-v3') {
+          args.primaryAddress = checksumAddressSafe(args.primaryAddress || '0x794a61358d6845594f94DC1db02A00b6d43b35c2');
         } else {
-          args.primaryAddress = checksumAddressSafe(args.primaryAddress) || args.primaryAddress;
-        }
+          // uniswap-v3: ensure primaryAddress contains borrowed token
+          const currentPool = (args.primaryAddress || '').toLowerCase();
+          const borrowedToken = (args.tokenIn[0] || '').toLowerCase();
+          if (
+            currentPool === '0x45dda9cb7c25131df268515131f647d726f50608' &&
+            borrowedToken === '0xc2132d05d31c914a87c6611c10748aeb04b58e8f'
+          ) {
+            args.primaryAddress = checksumAddressSafe('0xDaC8A8E6DBf8c690ec6815e0fF03491B2770255D');
+          } else if (!args.primaryAddress) {
+            args.primaryAddress = checksumAddressSafe('0xDaC8A8E6DBf8c690ec6815e0fF03491B2770255D');
+          } else {
+            args.primaryAddress = checksumAddressSafe(args.primaryAddress) || args.primaryAddress;
+          }
 
-        if (args.tokenOut && typeof args.tokenOut === 'string') {
-          args.tokenOut = checksumAddressSafe(args.tokenOut) || args.tokenOut;
-        } else if (!args.tokenOut && args.tokenIn && args.tokenIn[0]) {
-          args.tokenOut = args.tokenIn[0];
-        }
+          if (args.tokenOut && typeof args.tokenOut === 'string') {
+            args.tokenOut = checksumAddressSafe(args.tokenOut) || args.tokenOut;
+          } else if (!args.tokenOut && args.tokenIn && args.tokenIn[0]) {
+            args.tokenOut = args.tokenIn[0];
+          }
 
-        if (!args.amountOut && args.amountIn && args.amountIn[0]) {
-          args.amountOut = args.amountIn[0];
+          if (!args.amountOut && args.amountIn && args.amountIn[0]) {
+            args.amountOut = args.amountIn[0];
+          }
         }
       } else {
         // Enso API requires amountIn > 0 at action index [0]. If 0, empty, or missing, default to '1' (1 wei) to satisfy Enso validation
@@ -220,9 +229,26 @@ async function callDirectEnsoApi(
 ): Promise<{ ok: boolean; status: number; text: string; json: any }> {
   const chainId = payload.chainId || 137;
   const fromAddress = checksumAddressSafe(payload.fromAddress) || payload.fromAddress;
-  const receiver = checksumAddressSafe(payload.receiver || fromAddress) || fromAddress;
-  const spender = checksumAddressSafe(payload.spender || fromAddress) || fromAddress;
   const routingStrategy = payload.routingStrategy || 'ensowallet-v2';
+
+  const cleanShortcutsList = cleanShortcuts(payload.shortcuts || []);
+  const hasFlashloan = cleanShortcutsList.length > 0 && cleanShortcutsList[0]?.action === 'flashloan';
+  const ENSO_ROUTER = '0xC914A663837Eb21c5a650716E015659686597E55';
+
+  let receiver = payload.receiver ? checksumAddressSafe(payload.receiver) : undefined;
+  let spender = payload.spender ? checksumAddressSafe(payload.spender) : undefined;
+
+  if (hasFlashloan) {
+    if (!receiver || receiver.toLowerCase() === fromAddress.toLowerCase()) {
+      receiver = ENSO_ROUTER;
+    }
+    if (!spender || spender.toLowerCase() === fromAddress.toLowerCase()) {
+      spender = ENSO_ROUTER;
+    }
+  } else {
+    receiver = receiver || fromAddress;
+    spender = spender || fromAddress;
+  }
 
   const params = new URLSearchParams();
   params.set('chainId', String(chainId));
@@ -232,8 +258,6 @@ async function callDirectEnsoApi(
   if (routingStrategy) params.set('routingStrategy', routingStrategy);
 
   const directUrl = `https://api.enso.finance/api/v1/shortcuts/bundle?${params.toString()}`;
-
-  const cleanShortcutsList = cleanShortcuts(payload.shortcuts || []);
 
   // Call query-param style first with shortcuts array in body
   let res = await fetch(directUrl, {
@@ -254,6 +278,15 @@ async function callDirectEnsoApi(
 
   // If query-param style was not ok, try full body payload
   if (!res.ok && cleanShortcutsList.length > 0) {
+    const fallbackBody: any = {
+      chainId,
+      fromAddress,
+      receiver,
+      spender,
+      routingStrategy,
+      shortcuts: cleanShortcutsList,
+    };
+
     const fallbackRes = await fetch('https://api.enso.finance/api/v1/shortcuts/bundle', {
       method: 'POST',
       headers: {
@@ -261,14 +294,7 @@ async function callDirectEnsoApi(
         Authorization: `Bearer ${apiKey.trim()}`,
         Accept: 'application/json',
       },
-      body: JSON.stringify({
-        chainId,
-        fromAddress,
-        receiver,
-        spender,
-        routingStrategy,
-        shortcuts: cleanShortcutsList,
-      }),
+      body: JSON.stringify(fallbackBody),
     });
 
     const fallbackText = await fallbackRes.text();

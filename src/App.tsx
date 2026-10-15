@@ -18,6 +18,7 @@ import {
   POLYGON_TOKENS,
   POLYGON_PROTOCOLS,
   POLYGON_CHAIN_ID,
+  ENSO_ROUTER_POLYGON,
   getUniswapV3PoolForToken,
 } from './constants/tokens';
 import {
@@ -52,7 +53,7 @@ export default function App() {
   });
 
   // Parameters
-  const [flashAmount, setFlashAmount] = useState<number>(1);
+  const [flashAmount, setFlashAmount] = useState<number>(1000);
   const [profitTarget, setProfitTarget] = useState<number>(0.01);
   const [feeTier, setFeeTier] = useState<number>(0.0005); // 0.05%
   const [ltv, setLtv] = useState<number>(70); // 70% default
@@ -60,14 +61,15 @@ export default function App() {
   const [loops, setLoops] = useState<number>(1);
   const [isLinked, setIsLinked] = useState<boolean>(true);
   const [isZeroCapital, setIsZeroCapital] = useState<boolean>(true);
+  const [flashloanProtocol, setFlashloanProtocol] = useState<'aave-v3' | 'uniswap-v3'>('aave-v3');
 
   // Directly editable execution amounts:
   // 1. Deposit Collateral: Matches flashloan amount automatically (zero upfront capital)
-  // 2. Borrow Amount: 70% of collateral (based on LTV%)
-  // 3. Repay Flashloan Debt: Flashloan debt plus fee if needed
-  const [depositAmount, setDepositAmount] = useState<number>(1);
-  const [borrowAmount, setBorrowAmount] = useState<number>(0.7);
-  const [repayAmount, setRepayAmount] = useState<number>(1.0005);
+  // 2. Borrow Amount: In zero capital mode, covers repay amount + safety profit (e.g. 1005 for 1000)
+  // 3. Repay Flashloan Debt: Flashloan debt plus fee (e.g. 1000.5 for 1000)
+  const [depositAmount, setDepositAmount] = useState<number>(1000);
+  const [borrowAmount, setBorrowAmount] = useState<number>(1005);
+  const [repayAmount, setRepayAmount] = useState<number>(1000.5);
 
   // Active looping & equity dynamics
   const activeDynamics = useMemo(() => {
@@ -75,7 +77,7 @@ export default function App() {
   }, [flashAmount, ltv, loops, feeTier]);
 
   // Addresses
-  const [flashToken, setFlashToken] = useState<string>(POLYGON_TOKENS[0].address); // USDC.e
+  const [flashToken, setFlashToken] = useState<string>(POLYGON_TOKENS[1].address); // USDT
   const [collToken, setCollToken] = useState<string>(POLYGON_TOKENS[1].address); // USDT
   const [aavePool, setAavePool] = useState<string>(POLYGON_PROTOCOLS.aaveV3Pool.address);
   const [uniPool, setUniPool] = useState<string>(POLYGON_PROTOCOLS.uniswapV3UsdcUsdtPool.address);
@@ -285,13 +287,16 @@ export default function App() {
     const ltvRatio = Math.max(0.01, (ltv || 70) / 100);
 
     const calculatedDeposit = parseFloat(f.toFixed(6));
-    const calculatedBorrow = parseFloat((calculatedDeposit * ltvRatio).toFixed(6));
     const calculatedRepay = parseFloat((f * (1 + fee)).toFixed(6));
+    // In zero-capital mode, borrow must cover repay plus safety profit margin (e.g. 1005 for 1000)
+    const calculatedBorrow = isZeroCapital
+      ? parseFloat((calculatedRepay * 1.0045).toFixed(6))
+      : parseFloat((calculatedDeposit * ltvRatio).toFixed(6));
 
     setDepositAmount(calculatedDeposit);
     setBorrowAmount(calculatedBorrow);
     setRepayAmount(calculatedRepay);
-  }, [flashAmount, feeTier, ltv, isLinked]);
+  }, [flashAmount, feeTier, ltv, isLinked, isZeroCapital]);
 
   const handleResetAutoMath = useCallback(() => {
     setIsLinked(true);
@@ -300,17 +305,19 @@ export default function App() {
     const ltvRatio = Math.max(0.01, (ltv || 70) / 100);
 
     const calculatedDeposit = parseFloat(f.toFixed(6));
-    const calculatedBorrow = parseFloat((calculatedDeposit * ltvRatio).toFixed(6));
     const calculatedRepay = parseFloat((f * (1 + fee)).toFixed(6));
+    const calculatedBorrow = isZeroCapital
+      ? parseFloat((calculatedRepay * 1.0045).toFixed(6))
+      : parseFloat((calculatedDeposit * ltvRatio).toFixed(6));
 
     setDepositAmount(calculatedDeposit);
     setBorrowAmount(calculatedBorrow);
     setRepayAmount(calculatedRepay);
     addLog(
       'info',
-      `Auto-adjusted execution amounts: 1. Deposit Collateral=${calculatedDeposit} (100% matched to flashloan, $0 upfront), 2. Borrow Amount=${calculatedBorrow} (${ltv}% of collateral), 3. Repay Debt=${calculatedRepay} (Flashloan + Fee)`
+      `Auto-adjusted execution amounts: 1. Deposit Collateral=${calculatedDeposit} (100% matched to flashloan, $0 upfront), 2. Borrow Amount=${calculatedBorrow} (covers flashloan + profit), 3. Repay Debt=${calculatedRepay} (Flashloan + Fee)`
     );
-  }, [flashAmount, feeTier, ltv, addLog]);
+  }, [flashAmount, feeTier, ltv, isZeroCapital, addLog]);
 
   // Wei conversions for active amounts
   const activeWei = useMemo(() => {
@@ -345,7 +352,6 @@ export default function App() {
     const isSameToken = flashToken.toLowerCase() === collToken.toLowerCase();
 
     // Cycle 1:
-    // Only route/swap if flashToken differs from collToken (swapping same token to itself fails with 'No route found')
     if (!isSameToken) {
       callbackList.push({
         protocol: 'enso',
@@ -357,30 +363,31 @@ export default function App() {
           slippage: slippageBps,
         },
       });
+      callbackList.push({
+        protocol: 'aave-v3',
+        action: 'deposit',
+        args: {
+          primaryAddress: checksumAddressSafe(aavePool),
+          tokenIn: checksumAddressSafe(collToken),
+          tokenOut: checksumAddressSafe(collToken),
+          amountIn: { useOutputOfCallAt: 0 },
+          onBehalfOf: fromAddr,
+        },
+      });
+    } else {
+      // Same-token zero capital: directly supply flashloan output to Aave collateral
+      callbackList.push({
+        protocol: 'aave-v3',
+        action: 'deposit',
+        args: {
+          primaryAddress: checksumAddressSafe(aavePool),
+          tokenIn: checksumAddressSafe(collToken),
+          tokenOut: checksumAddressSafe(collToken),
+          amountIn: collWei,
+          onBehalfOf: fromAddr,
+        },
+      });
     }
-
-    // Call: Check balance of collToken received
-    const collBalIndex = callbackList.length;
-    callbackList.push({
-      protocol: 'enso',
-      action: 'balance',
-      args: {
-        token: checksumAddressSafe(collToken),
-      },
-    });
-
-    // Call: Deposit collToken into Aave V3 using output of balance check
-    callbackList.push({
-      protocol: 'aave-v3',
-      action: 'deposit',
-      args: {
-        primaryAddress: checksumAddressSafe(aavePool),
-        tokenIn: checksumAddressSafe(collToken),
-        tokenOut: checksumAddressSafe(collToken),
-        amountIn: { useOutputOfCallAt: collBalIndex },
-        onBehalfOf: fromAddr,
-      },
-    });
 
     // Call: Borrow flashToken from Aave V3
     const cycle1BorrowWei =
@@ -405,7 +412,6 @@ export default function App() {
           ? borrowWei
           : toTokenWei(stepInfo.borrowAmount, flashTokenMeta.decimals);
 
-      // Route borrowed flashToken to collToken ONLY if different tokens
       if (!isSameToken) {
         callbackList.push({
           protocol: 'enso',
@@ -417,32 +423,32 @@ export default function App() {
             slippage: slippageBps,
           },
         });
+        const routeIdx = callbackList.length - 1;
+        callbackList.push({
+          protocol: 'aave-v3',
+          action: 'deposit',
+          args: {
+            primaryAddress: checksumAddressSafe(aavePool),
+            tokenIn: checksumAddressSafe(collToken),
+            tokenOut: checksumAddressSafe(collToken),
+            amountIn: { useOutputOfCallAt: routeIdx },
+            onBehalfOf: fromAddr,
+          },
+        });
+      } else {
+        callbackList.push({
+          protocol: 'aave-v3',
+          action: 'deposit',
+          args: {
+            primaryAddress: checksumAddressSafe(aavePool),
+            tokenIn: checksumAddressSafe(collToken),
+            tokenOut: checksumAddressSafe(collToken),
+            amountIn: { useOutputOfCallAt: prevBorrowIndex },
+            onBehalfOf: fromAddr,
+          },
+        });
       }
 
-      // Check balance of collToken
-      const balIndex = callbackList.length;
-      callbackList.push({
-        protocol: 'enso',
-        action: 'balance',
-        args: {
-          token: checksumAddressSafe(collToken),
-        },
-      });
-
-      // Deposit collToken into Aave V3
-      callbackList.push({
-        protocol: 'aave-v3',
-        action: 'deposit',
-        args: {
-          primaryAddress: checksumAddressSafe(aavePool),
-          tokenIn: checksumAddressSafe(collToken),
-          tokenOut: checksumAddressSafe(collToken),
-          amountIn: { useOutputOfCallAt: balIndex },
-          onBehalfOf: fromAddr,
-        },
-      });
-
-      // Borrow flashToken from Aave V3
       callbackList.push({
         protocol: 'aave-v3',
         action: 'borrow',
@@ -455,11 +461,6 @@ export default function App() {
       });
     }
 
-    const ZERO_CAPITAL_MIN = '1'; // 1 wei, not 0
-    const userAmountIn = isZeroCapital
-      ? ZERO_CAPITAL_MIN
-      : (collWei && collWei !== '0' ? collWei : ZERO_CAPITAL_MIN);
-
     const resolvedPool =
       uniPool &&
       uniPool.toLowerCase() !== '0x45dda9cb7c25131df268515131f647d726f50608'
@@ -467,33 +468,40 @@ export default function App() {
         : getUniswapV3PoolForToken(flashToken, feeTier);
 
     const flashloanArgs: any = {
-      primaryAddress: checksumAddressSafe(resolvedPool),
+      primaryAddress:
+        flashloanProtocol === 'aave-v3'
+          ? checksumAddressSafe(aavePool)
+          : checksumAddressSafe(resolvedPool),
       flashloanToken: checksumAddressSafe(flashToken),
       flashloanAmount: flashWei,
       tokenIn: [checksumAddressSafe(flashToken)],
       amountIn: [flashWei],
-      tokenOut: checksumAddressSafe(flashToken),
-      amountOut: repayWei,
-      receiver: fromAddr,
       callback: callbackList,
     };
 
+    if (flashloanProtocol === 'uniswap-v3') {
+      flashloanArgs.tokenOut = checksumAddressSafe(flashToken);
+      flashloanArgs.amountOut = repayWei;
+    }
+
     const shortcutsList = [
       {
-        protocol: 'uniswap-v3',
+        protocol: flashloanProtocol,
         action: 'flashloan',
         args: flashloanArgs,
       },
     ];
 
-    return {
+    const payload: EnsoBundlePayload = {
       chainId: POLYGON_CHAIN_ID,
       fromAddress: fromAddr,
-      receiver: fromAddr,
-      spender: fromAddr,
+      receiver: isZeroCapital ? ENSO_ROUTER_POLYGON : fromAddr,
+      spender: isZeroCapital ? ENSO_ROUTER_POLYGON : fromAddr,
       routingStrategy: routingStrategy || 'ensowallet-v2',
       shortcuts: shortcutsList,
     };
+
+    return payload;
   }, [
     walletAddress,
     activeWei,
@@ -509,6 +517,7 @@ export default function App() {
     feeTier,
     isLinked,
     isZeroCapital,
+    flashloanProtocol,
     flashTokenMeta.decimals,
   ]);
 
@@ -729,6 +738,8 @@ export default function App() {
                 setAavePool={setAavePool}
                 routingStrategy={routingStrategy}
                 setRoutingStrategy={setRoutingStrategy}
+                flashloanProtocol={flashloanProtocol}
+                setFlashloanProtocol={setFlashloanProtocol}
               />
 
               <TokenAddressPicker
@@ -770,6 +781,7 @@ export default function App() {
               ltv={ltv}
               slippage={slippage}
               loops={loops}
+              flashloanProtocol={flashloanProtocol}
             />
 
             {/* Transaction Builder & Execution Card */}
@@ -818,6 +830,7 @@ export default function App() {
               ltv={ltv}
               slippage={slippage}
               loops={loops}
+              flashloanProtocol={flashloanProtocol}
             />
 
             <TxPreview

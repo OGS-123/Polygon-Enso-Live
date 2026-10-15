@@ -67,6 +67,8 @@ interface ParamFormProps {
   setAavePool: (val: string) => void;
   routingStrategy: string;
   setRoutingStrategy: (val: string) => void;
+  flashloanProtocol?: 'aave-v3' | 'uniswap-v3';
+  setFlashloanProtocol?: (val: 'aave-v3' | 'uniswap-v3') => void;
 }
 
 export const ParamForm: React.FC<ParamFormProps> = ({
@@ -104,6 +106,8 @@ export const ParamForm: React.FC<ParamFormProps> = ({
   setAavePool,
   routingStrategy,
   setRoutingStrategy,
+  flashloanProtocol = 'aave-v3',
+  setFlashloanProtocol,
 }) => {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const isZeroCap = isZeroCapital !== undefined ? isZeroCapital : true;
@@ -826,6 +830,21 @@ export const ParamForm: React.FC<ParamFormProps> = ({
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {/* Flashloan Protocol / Provider */}
+              <div>
+                <label className="text-[11px] font-semibold text-slate-400 block mb-1">
+                  Flashloan Provider Protocol
+                </label>
+                <select
+                  value={flashloanProtocol}
+                  onChange={(e) => setFlashloanProtocol?.(e.target.value as 'aave-v3' | 'uniswap-v3')}
+                  className="w-full bg-[#121422] border border-[#2b304a] rounded px-3 py-1.5 text-xs font-mono text-purple-200 focus:outline-none focus:border-purple-500"
+                >
+                  <option value="aave-v3">Aave V3 (Zero-Capital Native Lending - Recommended)</option>
+                  <option value="uniswap-v3">Uniswap V3 (DEX Liquidity Pool)</option>
+                </select>
+              </div>
+
               {/* Routing Strategy */}
               <div>
                 <label className="text-[11px] font-semibold text-slate-400 block mb-1">
@@ -840,14 +859,14 @@ export const ParamForm: React.FC<ParamFormProps> = ({
                   <option value="router">router (Standard Router)</option>
                 </select>
               </div>
+            </div>
 
-              {/* Safe Mode Info */}
-              <div className="flex items-center gap-2 text-[11px] text-slate-400 bg-[#121422] p-2.5 rounded border border-[#232840]">
-                <Info className="w-4 h-4 text-purple-400 shrink-0" />
-                <span>
-                  All contract addresses are strictly EIP-55 checksummed before transmission to Enso Shortcuts API.
-                </span>
-              </div>
+            {/* Safe Mode Info */}
+            <div className="flex items-center gap-2 text-[11px] text-slate-400 bg-[#121422] p-2.5 rounded border border-[#232840]">
+              <Info className="w-4 h-4 text-purple-400 shrink-0" />
+              <span>
+                Zero-capital mode supplies collateral directly from flashloaned liquidity without demanding upfront wallet token balances.
+              </span>
             </div>
           </div>
         )}

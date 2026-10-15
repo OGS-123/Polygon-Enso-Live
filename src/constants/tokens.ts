@@ -2,6 +2,7 @@ import { TokenInfo } from '../types/enso';
 
 export const POLYGON_CHAIN_ID = 137;
 export const POLYGON_CHAIN_ID_HEX = '0x89';
+export const ENSO_ROUTER_POLYGON = '0xC914A663837Eb21c5a650716E015659686597E55';
 
 export const POLYGON_NETWORK_PARAMS = {
   chainId: POLYGON_CHAIN_ID_HEX,
