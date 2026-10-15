@@ -1,0 +1,6 @@
+{
+  "name": "Polygon Enso Live",
+  "description": "Polygon DeFi bundle & flashloan execution engine powered by Enso Finance shortcuts API, featuring automated looping, Aave V3 folding, and Web3 transaction broadcasting.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
