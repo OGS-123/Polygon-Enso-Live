@@ -11,6 +11,13 @@ interface TxPreviewProps {
   txHash: string | null;
   walletConnected: boolean;
   canSend: boolean;
+  totalCollateral?: number;
+  totalDebt?: number;
+  netEquity?: number;
+  healthFactor?: number;
+  collTokenSymbol?: string;
+  debtTokenSymbol?: string;
+  isZeroCapital?: boolean;
 }
 
 export const TxPreview: React.FC<TxPreviewProps> = ({
@@ -22,6 +29,13 @@ export const TxPreview: React.FC<TxPreviewProps> = ({
   txHash,
   walletConnected,
   canSend,
+  totalCollateral,
+  totalDebt,
+  netEquity,
+  healthFactor,
+  collTokenSymbol = 'USDT',
+  debtTokenSymbol = 'USDC',
+  isZeroCapital = true,
 }) => {
   const [copied, setCopied] = useState(false);
   const [showFullData, setShowFullData] = useState(false);
@@ -78,6 +92,43 @@ export const TxPreview: React.FC<TxPreviewProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Position Equity & General Difference Status Bar */}
+      {netEquity !== undefined && (
+        <div className="bg-[#0b141f] border border-[#1e2a44] rounded-lg p-2.5 flex flex-wrap items-center justify-between gap-2.5 text-xs">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
+            <span className="font-semibold text-slate-200">
+              Net Equity Difference (&Delta;):{' '}
+              <strong className="text-emerald-300 font-mono">
+                +{netEquity.toFixed(4)} {collTokenSymbol}
+              </strong>
+            </span>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-400 font-mono">
+            <span>
+              Total Collateral: <strong className="text-sky-300">{totalCollateral?.toFixed(4)}</strong>
+            </span>
+            <span>&bull;</span>
+            <span>
+              Total Debt: <strong className="text-amber-300">{totalDebt?.toFixed(4)}</strong>
+            </span>
+            {healthFactor !== undefined && (
+              <>
+                <span>&bull;</span>
+                <span>
+                  HF: <strong className="text-emerald-400">{healthFactor}</strong>
+                </span>
+              </>
+            )}
+            <span>&bull;</span>
+            <span className="text-purple-300 font-sans font-semibold">
+              {isZeroCapital ? '$0 Upfront Capital' : 'Wallet Funded'}
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* Broadcast Success Banner */}
       {txHash && (

@@ -45,6 +45,8 @@ interface ParamFormProps {
   setLoops: (val: number) => void;
   isLinked: boolean;
   setIsLinked: (val: boolean) => void;
+  isZeroCapital?: boolean;
+  setIsZeroCapital?: (val: boolean) => void;
   // Editable execution parameters in order: 1. Deposit Collateral, 2. Borrow Amount, 3. Repay Flashloan Debt
   depositAmount: number;
   setDepositAmount: (val: number) => void;
@@ -82,6 +84,8 @@ export const ParamForm: React.FC<ParamFormProps> = ({
   setLoops,
   isLinked,
   setIsLinked,
+  isZeroCapital,
+  setIsZeroCapital,
   depositAmount,
   setDepositAmount,
   borrowAmount,
@@ -102,18 +106,17 @@ export const ParamForm: React.FC<ParamFormProps> = ({
   setRoutingStrategy,
 }) => {
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const isZeroCap = isZeroCapital !== undefined ? isZeroCapital : true;
 
-  // Looping & recursive leverage dynamics
+  // Final Total Collateral, Total Debts, and General Difference / Equity Dynamics
   const loopDynamics = calculateLoopingDynamics(flashAmount, ltv, loops, feeTier);
 
   // Exact required flashloan debt to repay
   const minRequiredDebt = flashAmount * (1 + feeTier);
-  const debtDifference = borrowAmount - minRequiredDebt;
-  const isBorrowInsufficient = borrowAmount < minRequiredDebt - 0.000001;
 
-  // Maximum borrow permitted by deposit collateral given LTV
-  const maxBorrowAllowedByDeposit = depositAmount * (ltv / 100);
-  const isDepositInsufficient = maxBorrowAllowedByDeposit < borrowAmount - 0.000001;
+  // Position Health & Solvency based on Final Total Collateral vs Final Total Debts
+  const isPositionSolvent = loopDynamics.difference >= 0;
+  const isPositionHealthy = loopDynamics.healthFactor >= 1.05;
 
   // 1. Match Deposit Collateral directly to Flashloan Amount (Zero upfront capital)
   const handleAutoFixDeposit = () => {
@@ -126,18 +129,12 @@ export const ParamForm: React.FC<ParamFormProps> = ({
     setBorrowAmount(parseFloat((depositAmount * ltvRatio).toFixed(6)));
   };
 
-  // 2b. Match Borrow to 100% of Debt for 1-Shot Atomic Flashloan Closeout
-  const handleMatchBorrowToDebt = () => {
-    const safeBorrow = minRequiredDebt + (profitTarget > 0 ? profitTarget : 0.01);
-    setBorrowAmount(parseFloat(safeBorrow.toFixed(6)));
-  };
-
   // 3. Set Repay Flashloan Debt plus fee if needed
   const handleAutoFixRepay = () => {
     setRepayAmount(parseFloat(minRequiredDebt.toFixed(6)));
   };
 
-  // Complete Safe Auto-Balance: adjusts Deposit (100% matched), Borrow (70%), and Repay (Debt + Fee) together
+  // Complete Safe Auto-Balance: aligns all parameters to guarantee positive net equity & safe LTV
   const handleSafeAutoBalance = () => {
     onResetAutoMath();
   };
@@ -513,28 +510,35 @@ export const ParamForm: React.FC<ParamFormProps> = ({
         </div>
       </div>
 
-      {/* SECTION 3: Execution Amounts (Fully Editable) */}
-      {/* 1. Deposit Collateral (100% matched to Flashloan, Zero Upfront) */}
-      {/* 2. Borrow Amount (70% LTV of Collateral) */}
-      {/* 3. Repay Flashloan Debt (Principal + Fee if needed) */}
+      {/* SECTION 3: Final Execution Amounts & Position Equity (Total Collateral vs Total Debts) */}
       <div className="bg-[#0a0b14] border border-[#1e2235] rounded-xl p-3.5 sm:p-4 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#1c1f30] pb-2.5">
           <div className="flex items-center gap-2">
             <Zap className="w-4 h-4 text-purple-400" />
             <div>
               <span className="text-xs font-bold text-white block">
-                Execution Amounts (Fully Editable)
+                Final Execution Amounts &amp; Position Equity
               </span>
               <span className="text-[10px] text-slate-400">
-                1. Deposit matches Flashloan ($0 upfront) &bull; 2. Borrow 70% &bull; 3. Repay Debt plus fee if needed
+                Governed by Final Total Collateral vs Final Total Debts &bull; Net Difference (&Delta;) guarantees smooth execution
               </span>
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-[10px] text-emerald-400 font-mono flex items-center gap-1">
-              <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-              {isLinked ? 'Auto-Adjusted (Zero Upfront)' : 'Manual Override Active'}
-            </span>
+            {/* Zero Upfront Capital Mode Switch */}
+            <label className="flex items-center gap-1.5 cursor-pointer bg-[#141829] px-2.5 py-1 rounded-lg border border-purple-800/60 hover:border-purple-600 transition-colors">
+              <input
+                type="checkbox"
+                checked={isZeroCap}
+                onChange={(e) => setIsZeroCapital && setIsZeroCapital(e.target.checked)}
+                className="accent-purple-500 w-3.5 h-3.5 cursor-pointer rounded"
+              />
+              <span className="text-[11px] font-semibold text-purple-200 flex items-center gap-1">
+                <ShieldCheck className="w-3 h-3 text-emerald-400" />
+                Zero Upfront Capital
+              </span>
+            </label>
+
             <button
               type="button"
               onClick={() => {
@@ -548,253 +552,218 @@ export const ParamForm: React.FC<ParamFormProps> = ({
           </div>
         </div>
 
-        {/* Compounding Looping Status Banner (when loops > 1) */}
-        {loops > 1 && (
-          <div className="bg-[#121629] border border-purple-800/70 rounded-lg p-3 flex flex-wrap items-center justify-between gap-2.5 text-xs">
-            <div className="flex items-center gap-2.5">
-              <span className="px-2 py-0.5 rounded bg-purple-900/80 text-purple-200 border border-purple-700/60 font-mono font-bold text-[11px]">
-                {loops} Cycles Active
-              </span>
-              <div>
-                <div className="text-[11px] font-bold text-white flex items-center gap-1.5">
-                  <span>Recursive Compounding:</span>
-                  <span className="text-purple-300 font-mono font-extrabold">
-                    {loopDynamics.collateralMultiplier.toFixed(2)}x Collateral Multiplier
-                  </span>
-                  {loopDynamics.isDoubled && (
-                    <span className="text-[9px] px-1.5 py-0.2 rounded bg-emerald-950 text-emerald-300 border border-emerald-800 font-bold">
-                      ✨ Doubled!
-                    </span>
-                  )}
-                </div>
-                <div className="text-[10px] text-slate-400 font-mono mt-0.5">
-                  Total Collateral: <span className="text-sky-300 font-bold">{loopDynamics.totalCollateral.toFixed(4)} {collTokenSymbol}</span> &bull; 
-                  Total Debt: <span className="text-amber-300 font-bold">{loopDynamics.totalBorrowDebt.toFixed(4)} {tokenSymbol}</span> &bull; 
-                  Net Difference (&Delta;): <span className="text-emerald-300 font-bold">+{loopDynamics.difference.toFixed(4)}</span>
-                </div>
-              </div>
-            </div>
-            <div className="flex items-center gap-2 text-[10px] font-mono text-slate-400 bg-[#090b14] px-2.5 py-1.5 rounded border border-[#1e233d]">
-              <span>Health Factor:</span>
-              <span className="text-emerald-400 font-bold">{loopDynamics.healthFactor} (Safe)</span>
-            </div>
-          </div>
-        )}
-
+        {/* Primary Position Cards: Final Total Collateral vs Final Total Debts vs Net Equity Difference */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          {/* Parameter 1: Deposit Collateral (Matches Flashloan, 0 Upfront) */}
-          <div className="space-y-1.5 bg-[#121422] p-3 rounded-lg border border-[#242940] transition-all">
+          {/* Card 1: Final Total Collateral */}
+          <div className="bg-[#121422] p-3 rounded-lg border border-[#242940] space-y-1.5">
             <div className="flex items-center justify-between">
-              <label className="text-[10px] font-bold text-slate-200 flex items-center gap-1">
-                <span>1. Deposit Collateral</span>
-              </label>
-              <span className="text-[9px] px-1.5 py-0.5 rounded bg-sky-950 text-sky-300 border border-sky-800 font-medium">
+              <span className="text-[10px] font-bold text-slate-200 uppercase tracking-wide">
+                Final Total Collateral (C)
+              </span>
+              <span className="text-[9px] px-1.5 py-0.5 rounded bg-sky-950 text-sky-300 border border-sky-800 font-mono font-bold">
                 {collTokenSymbol}
               </span>
             </div>
-            <div className="text-[9px] text-emerald-400 font-mono font-medium flex items-center justify-between">
-              <span>Zero Upfront Capital</span>
-              <span className="text-slate-400">100% Flash-Funded</span>
+            <div className="text-base sm:text-lg font-mono font-extrabold text-sky-200">
+              {loopDynamics.totalCollateral.toFixed(4)}
             </div>
-            <input
-              type="number"
-              step="any"
-              value={depositAmount || ''}
-              onChange={(e) => {
-                setIsLinked(false);
-                setDepositAmount(parseFloat(e.target.value) || 0);
-              }}
-              className="w-full bg-[#07080e] border border-[#2b304a] text-sky-200 focus:border-purple-500 rounded px-3 py-2 text-xs font-mono font-bold focus:outline-none"
-            />
-            <div className="text-[10px] text-slate-500 font-mono truncate">
-              {depositWei} (wei)
+            <div className="text-[10px] text-purple-300 font-mono flex items-center justify-between">
+              <span>Multiplier:</span>
+              <span className="font-bold">{loopDynamics.collateralMultiplier.toFixed(2)}x Compounded</span>
             </div>
-            <div className="text-[10px] text-slate-400 flex items-center justify-between pt-0.5">
-              <span>Matches Flashloan:</span>
-              <span className="font-mono text-emerald-400 font-semibold">
-                {flashAmount} {tokenSymbol}
+            <div className="text-[10px] text-slate-400 border-t border-[#1c1f30] pt-1 flex items-center justify-between">
+              <span>{loops} Folding Cycles:</span>
+              <span className="text-emerald-400 font-mono font-semibold">
+                {isZeroCap ? '$0 Upfront Capital' : `${depositAmount} Seed`}
               </span>
-            </div>
-            <div className="pt-1 flex justify-between items-center text-[10px] border-t border-[#1a1c2a]">
-              <span className="text-slate-400">User Wallet: $0.00</span>
-              <button
-                type="button"
-                onClick={handleAutoFixDeposit}
-                className="text-purple-400 hover:text-purple-300 font-medium flex items-center gap-1 hover:underline"
-                title="Match deposit collateral directly to flashloan amount (zero upfront capital)"
-              >
-                <RefreshCw className="w-2.5 h-2.5" /> Match Flashloan (1:1)
-              </button>
             </div>
           </div>
 
-          {/* Parameter 2: Borrow Amount (70% of Collateral) */}
-          <div className="space-y-1.5 bg-[#121422] p-3 rounded-lg border border-[#242940] transition-all">
+          {/* Card 2: Final Total Debts */}
+          <div className="bg-[#121422] p-3 rounded-lg border border-[#242940] space-y-1.5">
             <div className="flex items-center justify-between">
-              <label className="text-[10px] font-bold text-slate-200 flex items-center gap-1">
-                <span>2. Borrow Amount</span>
-              </label>
-              <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800 font-medium">
+              <span className="text-[10px] font-bold text-slate-200 uppercase tracking-wide">
+                Final Total Debts (D)
+              </span>
+              <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-800 font-mono font-bold">
                 {tokenSymbol}
               </span>
             </div>
-            <div className="text-[9px] text-purple-300 font-mono font-medium flex items-center justify-between">
-              <span>Borrow Ratio: {ltv}%</span>
-              <div className="flex gap-1">
-                {[50, 70, 75, 80].map((preset) => (
-                  <button
-                    key={preset}
-                    type="button"
-                    onClick={() => {
-                      setLtv(preset);
-                      setBorrowAmount(parseFloat((depositAmount * (preset / 100)).toFixed(6)));
-                    }}
-                    className={`text-[8px] px-1 py-0.2 rounded ${
-                      ltv === preset
-                        ? 'bg-purple-600 text-white font-bold'
-                        : 'bg-[#1b1f33] text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    {preset}%
-                  </button>
-                ))}
-              </div>
+            <div className="text-base sm:text-lg font-mono font-extrabold text-amber-200">
+              {loopDynamics.totalBorrowDebt.toFixed(4)}
             </div>
-            <input
-              type="number"
-              step="any"
-              value={borrowAmount || ''}
-              onChange={(e) => {
-                setIsLinked(false);
-                setBorrowAmount(parseFloat(e.target.value) || 0);
-              }}
-              className="w-full bg-[#07080e] border border-[#2b304a] text-emerald-300 focus:border-purple-500 rounded px-3 py-2 text-xs font-mono font-bold focus:outline-none"
-            />
-            <div className="text-[10px] text-slate-500 font-mono truncate">
-              {borrowWei} (wei)
+            <div className="text-[10px] text-amber-300/90 font-mono flex items-center justify-between">
+              <span>Effective LTV:</span>
+              <span className="font-bold">{loopDynamics.effectiveLtv}%</span>
             </div>
-            <div className="text-[10px] text-slate-400 flex items-center justify-between pt-0.5">
-              <span>{ltv}% of Collateral:</span>
-              <span className="font-mono text-emerald-400 font-semibold">
-                {(depositAmount * (ltv / 100)).toFixed(4)} {tokenSymbol}
+            <div className="text-[10px] text-slate-400 border-t border-[#1c1f30] pt-1 flex items-center justify-between">
+              <span>Liq. Buffer:</span>
+              <span className="text-sky-300 font-mono font-semibold">
+                +{loopDynamics.liquidationBuffer.toFixed(4)} {tokenSymbol}
               </span>
-            </div>
-            <div className="pt-1 flex justify-between items-center text-[10px] border-t border-[#1a1c2a]">
-              <span className="text-slate-400">Aave V3 Debt</span>
-              <button
-                type="button"
-                onClick={handleAutoFixBorrow}
-                className="text-purple-400 hover:text-purple-300 font-medium flex items-center gap-1 hover:underline"
-                title="Set borrow amount to 70% (or current LTV%) of collateral"
-              >
-                <RefreshCw className="w-2.5 h-2.5" /> Auto-Set 70% LTV
-              </button>
             </div>
           </div>
 
-          {/* Parameter 3: Repay Flashloan Debt (Principal + Fee if needed) */}
-          <div className="space-y-1.5 bg-[#121422] p-3 rounded-lg border border-[#242940] transition-all">
+          {/* Card 3: Net Position Equity & General Difference */}
+          <div className="bg-[#121422] p-3 rounded-lg border border-emerald-900/60 space-y-1.5">
             <div className="flex items-center justify-between">
-              <label className="text-[10px] font-bold text-slate-200 flex items-center gap-1">
-                <span>3. Repay Flashloan Debt</span>
-              </label>
-              <span className="text-[9px] px-1.5 py-0.5 rounded bg-purple-950 text-purple-300 border border-purple-800 font-medium">
-                {tokenSymbol}
+              <span className="text-[10px] font-bold text-emerald-300 uppercase tracking-wide">
+                Net Equity Difference (&Delta;)
+              </span>
+              <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800 font-mono font-bold">
+                C &minus; D
               </span>
             </div>
-            <div className="text-[9px] text-slate-400 font-mono flex items-center justify-between">
-              <span>Plus Fee if needed:</span>
-              <div className="flex gap-1">
-                {[
-                  { label: '0%', fee: 0 },
-                  { label: '0.05%', fee: 0.0005 },
-                  { label: '0.09%', fee: 0.0009 },
-                ].map((item) => (
-                  <button
-                    key={item.label}
-                    type="button"
-                    onClick={() => {
-                      setFeeTier(item.fee);
-                      setRepayAmount(parseFloat((flashAmount * (1 + item.fee)).toFixed(6)));
-                    }}
-                    className={`text-[8px] px-1 py-0.2 rounded ${
-                      feeTier === item.fee
-                        ? 'bg-purple-600 text-white font-bold'
-                        : 'bg-[#1b1f33] text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    {item.label}
-                  </button>
-                ))}
-              </div>
+            <div className="text-base sm:text-lg font-mono font-extrabold text-emerald-300">
+              +{loopDynamics.difference.toFixed(4)}
             </div>
-            <input
-              type="number"
-              step="any"
-              value={repayAmount || ''}
-              onChange={(e) => {
-                setIsLinked(false);
-                setRepayAmount(parseFloat(e.target.value) || 0);
-              }}
-              className="w-full bg-[#07080e] border border-[#2b304a] rounded px-3 py-2 text-xs font-mono font-bold text-purple-200 focus:outline-none focus:border-purple-500"
-            />
-            <div className="text-[10px] text-slate-500 font-mono truncate">
-              {repayWei} (wei)
+            <div className="text-[10px] text-emerald-300/90 font-mono flex items-center justify-between">
+              <span>Health Factor:</span>
+              <span className="font-bold text-white">{loopDynamics.healthFactor} (Safe)</span>
             </div>
-            <div className="text-[10px] text-slate-400 flex items-center justify-between pt-0.5">
-              <span>Pool Debt + Fee:</span>
-              <span className="font-mono text-purple-300 font-semibold">
-                {minRequiredDebt.toFixed(4)} {tokenSymbol}
+            <div className="text-[10px] text-slate-400 border-t border-[#1c1f30] pt-1 flex items-center justify-between">
+              <span>Equity Ratio:</span>
+              <span className="text-emerald-400 font-mono font-semibold">
+                {loopDynamics.netEquityPercentage}% Solvent
               </span>
-            </div>
-            <div className="pt-1 flex justify-between items-center text-[10px] border-t border-[#1a1c2a]">
-              <span className="text-slate-400">Fee: +{(flashAmount * feeTier).toFixed(4)}</span>
-              <button
-                type="button"
-                onClick={handleAutoFixRepay}
-                className="text-purple-400 hover:text-purple-300 font-medium flex items-center gap-1 hover:underline"
-                title="Set repay amount to flashloan principal plus pool fee"
-              >
-                <RefreshCw className="w-2.5 h-2.5" /> Exact Debt + Fee
-              </button>
             </div>
           </div>
         </div>
 
-        {/* Live Zero-Upfront Execution Status & Quick Action Banner */}
-        <div className="bg-[#101322] border border-[#232942] rounded-lg p-3 text-xs text-slate-300 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-md">
-          <div className="flex items-start gap-2.5">
-            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-            <div>
-              <span className="font-bold text-white block text-xs">
-                Zero-Upfront Flashloan Mode Active
+        {/* General Difference / Equity Verification Banner */}
+        {isPositionSolvent ? (
+          <div className="bg-[#0b1b16] border border-emerald-600/70 rounded-lg p-3 text-xs text-emerald-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-md">
+            <div className="flex items-center gap-2.5">
+              <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+              <div>
+                <span className="font-bold text-white text-xs block">
+                  ✨ General Difference &amp; Equity Verified Solvent (+{loopDynamics.difference.toFixed(4)} {collTokenSymbol})
+                </span>
+                <span className="text-[11px] text-emerald-300/90 mt-0.5 block leading-relaxed">
+                  Final Collateral ({loopDynamics.totalCollateral.toFixed(4)} {collTokenSymbol}) exceeds Total Debts ({loopDynamics.totalBorrowDebt.toFixed(4)} {tokenSymbol}) by +{loopDynamics.difference.toFixed(4)} with safe Health Factor {loopDynamics.healthFactor}. Ready to execute transactions smoothly without upfront capital barriers.
+                </span>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <span className="px-2.5 py-1 rounded bg-emerald-950 text-emerald-300 border border-emerald-700/80 font-mono font-bold text-[10px]">
+                SOLVENT &bull; HF {loopDynamics.healthFactor}
               </span>
-              <p className="text-[11px] text-slate-400 mt-0.5 leading-relaxed">
-                • <strong>1. Deposit Collateral:</strong> {depositAmount} {collTokenSymbol} (matches {flashAmount} {tokenSymbol} flashloan, $0 upfront user capital)
-                <br />
-                • <strong>2. Borrow Amount:</strong> {borrowAmount} {tokenSymbol} ({ltv}% LTV of collateral)
-                <br />
-                • <strong>3. Repay Flashloan Debt:</strong> {repayAmount} {tokenSymbol} (Flashloan {flashAmount} + {(feeTier * 100).toFixed(2)}% fee)
-              </p>
             </div>
           </div>
-          <div className="flex flex-wrap sm:flex-col gap-1.5 shrink-0 w-full sm:w-auto">
+        ) : (
+          <div className="bg-amber-950/40 border border-amber-700/70 rounded-lg p-3 text-xs text-amber-200 flex items-center justify-between gap-2.5">
+            <div className="flex items-center gap-2.5">
+              <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0" />
+              <div>
+                <span className="font-bold text-white text-xs block">Negative Equity Warning</span>
+                <span className="text-[11px] text-amber-300/90 mt-0.5 block">
+                  Total Debts exceed Total Collateral. Adjust borrow ratio or click Safe Auto-Balance below to restore positive equity.
+                </span>
+              </div>
+            </div>
             <button
               type="button"
-              onClick={handleAutoFixBorrow}
-              className="px-2.5 py-1 text-[11px] font-semibold rounded bg-purple-900/60 hover:bg-purple-800 text-purple-200 border border-purple-700/60 transition-all text-center"
-              title="Reset borrow amount to exactly 70% of collateral"
+              onClick={handleSafeAutoBalance}
+              className="px-2.5 py-1 text-xs font-semibold rounded bg-amber-600 hover:bg-amber-500 text-white shrink-0"
             >
-              Reset 70% Borrow ({ (depositAmount * (ltv / 100)).toFixed(4) })
+              Safe Auto-Balance
             </button>
-            <button
-              type="button"
-              onClick={handleMatchBorrowToDebt}
-              className="px-2.5 py-1 text-[11px] font-semibold rounded bg-emerald-900/60 hover:bg-emerald-800 text-emerald-200 border border-emerald-700/60 transition-all text-center"
-              title="Match borrow to 100% of flashloan debt + profit for 1-shot self-repayment without wallet balance"
-            >
-              1-Shot Self-Repay ({minRequiredDebt.toFixed(4)})
-            </button>
+          </div>
+        )}
+
+        {/* Detailed Per-Cycle Execution Parameters (Fully Editable) */}
+        <div className="border border-[#1e233d] rounded-lg p-3 bg-[#0d0f1c] space-y-2.5">
+          <div className="flex items-center justify-between text-[11px] font-semibold text-slate-300 pb-1.5 border-b border-[#1b1e32]">
+            <span>Per-Cycle Seed Parameters (Synchronized to Totals)</span>
+            <span className="text-[10px] text-slate-400 font-normal">
+              1. Seed Collateral &bull; 2. Borrow 70% &bull; 3. Flashloan Fee Debt
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+            {/* Step 1: Deposit Collateral */}
+            <div className="bg-[#121422] p-2.5 rounded border border-[#242940] space-y-1">
+              <div className="flex items-center justify-between text-[10px] font-semibold text-slate-300">
+                <span>1. Cycle 1 Collateral</span>
+                <span className="text-sky-300 font-mono">{collTokenSymbol}</span>
+              </div>
+              <input
+                type="number"
+                step="any"
+                value={depositAmount || ''}
+                onChange={(e) => {
+                  setIsLinked(false);
+                  setDepositAmount(parseFloat(e.target.value) || 0);
+                }}
+                className="w-full bg-[#07080e] border border-[#2b304a] text-sky-200 focus:border-purple-500 rounded px-2.5 py-1.5 text-xs font-mono font-bold focus:outline-none"
+              />
+              <div className="flex items-center justify-between text-[9px] text-slate-400 pt-0.5">
+                <span>100% Flash-funded:</span>
+                <button
+                  type="button"
+                  onClick={handleAutoFixDeposit}
+                  className="text-purple-400 hover:underline flex items-center gap-0.5"
+                >
+                  <RefreshCw className="w-2 h-2" /> Match Flashloan
+                </button>
+              </div>
+            </div>
+
+            {/* Step 2: Borrow Amount */}
+            <div className="bg-[#121422] p-2.5 rounded border border-[#242940] space-y-1">
+              <div className="flex items-center justify-between text-[10px] font-semibold text-slate-300">
+                <span>2. Cycle 1 Borrow ({ltv}%)</span>
+                <span className="text-emerald-300 font-mono">{tokenSymbol}</span>
+              </div>
+              <input
+                type="number"
+                step="any"
+                value={borrowAmount || ''}
+                onChange={(e) => {
+                  setIsLinked(false);
+                  setBorrowAmount(parseFloat(e.target.value) || 0);
+                }}
+                className="w-full bg-[#07080e] border border-[#2b304a] text-emerald-300 focus:border-purple-500 rounded px-2.5 py-1.5 text-xs font-mono font-bold focus:outline-none"
+              />
+              <div className="flex items-center justify-between text-[9px] text-slate-400 pt-0.5">
+                <span>70% Ratio:</span>
+                <button
+                  type="button"
+                  onClick={handleAutoFixBorrow}
+                  className="text-purple-400 hover:underline flex items-center gap-0.5"
+                >
+                  <RefreshCw className="w-2 h-2" /> Auto-Set 70%
+                </button>
+              </div>
+            </div>
+
+            {/* Step 3: Repay Flashloan Debt */}
+            <div className="bg-[#121422] p-2.5 rounded border border-[#242940] space-y-1">
+              <div className="flex items-center justify-between text-[10px] font-semibold text-slate-300">
+                <span>3. Flashloan Debt</span>
+                <span className="text-purple-300 font-mono">{tokenSymbol}</span>
+              </div>
+              <input
+                type="number"
+                step="any"
+                value={repayAmount || ''}
+                onChange={(e) => {
+                  setIsLinked(false);
+                  setRepayAmount(parseFloat(e.target.value) || 0);
+                }}
+                className="w-full bg-[#07080e] border border-[#2b304a] text-purple-200 focus:border-purple-500 rounded px-2.5 py-1.5 text-xs font-mono font-bold focus:outline-none"
+              />
+              <div className="flex items-center justify-between text-[9px] text-slate-400 pt-0.5">
+                <span>Fee: +{(flashAmount * feeTier).toFixed(4)}</span>
+                <button
+                  type="button"
+                  onClick={handleAutoFixRepay}
+                  className="text-purple-400 hover:underline flex items-center gap-0.5"
+                >
+                  <RefreshCw className="w-2 h-2" /> Exact Debt + Fee
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       </div>

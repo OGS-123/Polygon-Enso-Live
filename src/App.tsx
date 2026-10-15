@@ -54,6 +54,7 @@ export default function App() {
   const [slippage, setSlippage] = useState<number>(0.5); // 0.5%
   const [loops, setLoops] = useState<number>(1);
   const [isLinked, setIsLinked] = useState<boolean>(true);
+  const [isZeroCapital, setIsZeroCapital] = useState<boolean>(true);
 
   // Directly editable execution amounts:
   // 1. Deposit Collateral: Matches flashloan amount automatically (zero upfront capital)
@@ -62,6 +63,11 @@ export default function App() {
   const [depositAmount, setDepositAmount] = useState<number>(1);
   const [borrowAmount, setBorrowAmount] = useState<number>(0.7);
   const [repayAmount, setRepayAmount] = useState<number>(1.0005);
+
+  // Active looping & equity dynamics
+  const activeDynamics = useMemo(() => {
+    return calculateLoopingDynamics(flashAmount, ltv, loops, feeTier);
+  }, [flashAmount, ltv, loops, feeTier]);
 
   // Addresses
   const [flashToken, setFlashToken] = useState<string>(POLYGON_TOKENS[0].address); // USDC.e
@@ -436,7 +442,7 @@ export default function App() {
           flashloanToken: checksumAddressSafe(flashToken),
           flashloanAmount: flashWei,
           tokenIn: checksumAddressSafe(collToken),
-          amountIn: collWei,
+          amountIn: isZeroCapital ? '0' : collWei,
           tokenOut: checksumAddressSafe(flashToken),
           receiver: fromAddr,
           callback: callbackList,
@@ -466,6 +472,7 @@ export default function App() {
     ltv,
     feeTier,
     isLinked,
+    isZeroCapital,
     flashTokenMeta.decimals,
   ]);
 
@@ -482,11 +489,17 @@ export default function App() {
       return;
     }
 
-    const minRequiredDebt = flashAmount * (1 + feeTier);
-    if (borrowAmount < minRequiredDebt - 0.000001) {
+    // Solvency & execution validation based on Final Total Collateral vs Final Total Debts & Equity
+    const dynamics = calculateLoopingDynamics(flashAmount, ltv, loops, feeTier);
+    if (dynamics.difference >= 0) {
+      addLog(
+        'success',
+        `✨ General Difference & Equity Verified: +${dynamics.difference.toFixed(4)} ${collTokenMeta.symbol} Net Equity | Final Collateral: ${dynamics.totalCollateral.toFixed(4)} | Final Debts: ${dynamics.totalBorrowDebt.toFixed(4)} | Health Factor: ${dynamics.healthFactor} (Safe). Executing bundle smoothly...`
+      );
+    } else {
       addLog(
         'warn',
-        `Warning: Borrow amount (${borrowAmount} ${flashTokenMeta.symbol}) is LESS than required debt (${minRequiredDebt.toFixed(4)} ${flashTokenMeta.symbol}). Enso simulation may return "Flashloan repayment insufficient".`
+        `Notice: Position Equity difference is negative (${dynamics.difference.toFixed(4)}). Consider clicking "Safe Auto-Balance" to restore safe positive equity.`
       );
     }
 
@@ -494,7 +507,7 @@ export default function App() {
     setTxHash(null);
     addLog(
       'info',
-      `Building bundle: Flashloan=${flashAmount} ${flashTokenMeta.symbol}, Borrow=${borrowAmount.toFixed(4)}, Loops=${loops}, Strategy=${routingStrategy}...`
+      `Building bundle: Flashloan=${flashAmount} ${flashTokenMeta.symbol}, Final Collateral=${dynamics.totalCollateral.toFixed(4)}, Final Debt=${dynamics.totalBorrowDebt.toFixed(4)}, Zero Capital=${isZeroCapital ? 'Yes' : 'No'}...`
     );
 
     try {
@@ -654,6 +667,8 @@ export default function App() {
                 setLoops={setLoops}
                 isLinked={isLinked}
                 setIsLinked={setIsLinked}
+                isZeroCapital={isZeroCapital}
+                setIsZeroCapital={setIsZeroCapital}
                 depositAmount={depositAmount}
                 setDepositAmount={setDepositAmount}
                 borrowAmount={borrowAmount}
@@ -725,6 +740,13 @@ export default function App() {
               txHash={txHash}
               walletConnected={walletState.isConnected}
               canSend={canSendTx}
+              totalCollateral={activeDynamics.totalCollateral}
+              totalDebt={activeDynamics.totalBorrowDebt}
+              netEquity={activeDynamics.difference}
+              healthFactor={activeDynamics.healthFactor}
+              collTokenSymbol={collTokenMeta.symbol}
+              debtTokenSymbol={flashTokenMeta.symbol}
+              isZeroCapital={isZeroCapital}
             />
           </div>
         )}
@@ -765,6 +787,13 @@ export default function App() {
               txHash={txHash}
               walletConnected={walletState.isConnected}
               canSend={canSendTx}
+              totalCollateral={activeDynamics.totalCollateral}
+              totalDebt={activeDynamics.totalBorrowDebt}
+              netEquity={activeDynamics.difference}
+              healthFactor={activeDynamics.healthFactor}
+              collTokenSymbol={collTokenMeta.symbol}
+              debtTokenSymbol={flashTokenMeta.symbol}
+              isZeroCapital={isZeroCapital}
             />
           </div>
         )}

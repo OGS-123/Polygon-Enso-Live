@@ -36,6 +36,8 @@ export interface LoopingDynamics {
   liquidationBuffer: number;
   healthFactor: number;
   netEquityPercentage: number;
+  isSolvent: boolean;
+  isHealthy: boolean;
   iterations: LoopIteration[];
 }
 
@@ -124,6 +126,8 @@ export function calculateLoopingDynamics(
     liquidationBuffer,
     healthFactor,
     netEquityPercentage: parseFloat(netEquityPercentage.toFixed(2)),
+    isSolvent: difference >= 0,
+    isHealthy: healthFactor >= 1.05,
     iterations,
   };
 }
