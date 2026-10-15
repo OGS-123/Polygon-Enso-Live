@@ -48,14 +48,17 @@ export default function App() {
   const [flashAmount, setFlashAmount] = useState<number>(1);
   const [profitTarget, setProfitTarget] = useState<number>(0.01);
   const [feeTier, setFeeTier] = useState<number>(0.0005); // 0.05%
-  const [ltv, setLtv] = useState<number>(75); // 75%
+  const [ltv, setLtv] = useState<number>(70); // 70% default
   const [slippage, setSlippage] = useState<number>(0.5); // 0.5%
   const [loops, setLoops] = useState<number>(1);
   const [isLinked, setIsLinked] = useState<boolean>(true);
 
-  // Directly editable execution amounts: 1. Deposit Collateral, 2. Borrow Amount, 3. Repay Flashloan Debt
-  const [depositAmount, setDepositAmount] = useState<number>(1.3541);
-  const [borrowAmount, setBorrowAmount] = useState<number>(1.0105);
+  // Directly editable execution amounts:
+  // 1. Deposit Collateral: Matches flashloan amount automatically (zero upfront capital)
+  // 2. Borrow Amount: 70% of collateral (based on LTV%)
+  // 3. Repay Flashloan Debt: Flashloan debt plus fee if needed
+  const [depositAmount, setDepositAmount] = useState<number>(1);
+  const [borrowAmount, setBorrowAmount] = useState<number>(0.7);
   const [repayAmount, setRepayAmount] = useState<number>(1.0005);
 
   // Addresses
@@ -252,42 +255,43 @@ export default function App() {
     localStorage.setItem('enso_key', newKey);
   };
 
-  // Synchronize derived amounts when auto-linking is active
+  // Synchronize derived amounts when auto-linking is active:
+  // 1. Deposit Collateral matches flashloan amount automatically (zero upfront capital from users)
+  // 2. Borrow Amount is 70% of collateral (based on LTV%)
+  // 3. Repay Flashloan Debt plus fee if needed
   useEffect(() => {
     if (!isLinked) return;
-    const f = flashAmount || 0;
-    const fee = feeTier || 0;
-    const profit = profitTarget || 0;
+    const f = Math.max(0, flashAmount || 0);
+    const fee = Math.max(0, feeTier || 0);
+    const ltvRatio = Math.max(0.01, (ltv || 70) / 100);
+
+    const calculatedDeposit = parseFloat(f.toFixed(6));
+    const calculatedBorrow = parseFloat((calculatedDeposit * ltvRatio).toFixed(6));
     const calculatedRepay = parseFloat((f * (1 + fee)).toFixed(6));
-    const calculatedBorrow = parseFloat((calculatedRepay + profit).toFixed(6));
-    const slipFactor = Math.max(0.01, 1 - (slippage || 0) / 100);
-    const ltvRatio = Math.max(0.01, (ltv || 75) / 100);
-    const calculatedDeposit = parseFloat(((calculatedBorrow / ltvRatio) / slipFactor).toFixed(6));
 
     setDepositAmount(calculatedDeposit);
     setBorrowAmount(calculatedBorrow);
     setRepayAmount(calculatedRepay);
-  }, [flashAmount, feeTier, profitTarget, ltv, slippage, isLinked]);
+  }, [flashAmount, feeTier, ltv, isLinked]);
 
   const handleResetAutoMath = useCallback(() => {
     setIsLinked(true);
-    const f = flashAmount || 0;
-    const fee = feeTier || 0;
-    const profit = profitTarget || 0;
+    const f = Math.max(0, flashAmount || 0);
+    const fee = Math.max(0, feeTier || 0);
+    const ltvRatio = Math.max(0.01, (ltv || 70) / 100);
+
+    const calculatedDeposit = parseFloat(f.toFixed(6));
+    const calculatedBorrow = parseFloat((calculatedDeposit * ltvRatio).toFixed(6));
     const calculatedRepay = parseFloat((f * (1 + fee)).toFixed(6));
-    const calculatedBorrow = parseFloat((calculatedRepay + profit).toFixed(6));
-    const slipFactor = Math.max(0.01, 1 - (slippage || 0) / 100);
-    const ltvRatio = Math.max(0.01, (ltv || 75) / 100);
-    const calculatedDeposit = parseFloat(((calculatedBorrow / ltvRatio) / slipFactor).toFixed(6));
 
     setDepositAmount(calculatedDeposit);
     setBorrowAmount(calculatedBorrow);
     setRepayAmount(calculatedRepay);
     addLog(
       'info',
-      `Auto-calculated execution amounts: Deposit Collateral=${calculatedDeposit}, Borrow Amount=${calculatedBorrow}, Repay Debt=${calculatedRepay} (Flashloan: ${flashAmount}, LTV: ${ltv}%, Slippage: ${slippage}%)`
+      `Auto-adjusted execution amounts: 1. Deposit Collateral=${calculatedDeposit} (100% matched to flashloan, $0 upfront), 2. Borrow Amount=${calculatedBorrow} (${ltv}% of collateral), 3. Repay Debt=${calculatedRepay} (Flashloan + Fee)`
     );
-  }, [flashAmount, feeTier, profitTarget, ltv, slippage, addLog]);
+  }, [flashAmount, feeTier, ltv, addLog]);
 
   // Wei conversions for active amounts
   const activeWei = useMemo(() => {
