@@ -45,18 +45,18 @@ export default function App() {
   });
 
   // Parameters
-  const [flashAmount, setFlashAmount] = useState<number>(50000);
-  const [profitTarget, setProfitTarget] = useState<number>(25.0);
+  const [flashAmount, setFlashAmount] = useState<number>(1);
+  const [profitTarget, setProfitTarget] = useState<number>(0.01);
   const [feeTier, setFeeTier] = useState<number>(0.0005); // 0.05%
   const [ltv, setLtv] = useState<number>(75); // 75%
   const [slippage, setSlippage] = useState<number>(0.5); // 0.5%
   const [loops, setLoops] = useState<number>(1);
   const [isLinked, setIsLinked] = useState<boolean>(true);
 
-  // Directly editable execution amounts
-  const [repayAmount, setRepayAmount] = useState<number>(50025);
-  const [borrowAmount, setBorrowAmount] = useState<number>(50050);
-  const [depositAmount, setDepositAmount] = useState<number>(67067);
+  // Directly editable execution amounts: 1. Deposit Collateral, 2. Borrow Amount, 3. Repay Flashloan Debt
+  const [depositAmount, setDepositAmount] = useState<number>(1.3541);
+  const [borrowAmount, setBorrowAmount] = useState<number>(1.0105);
+  const [repayAmount, setRepayAmount] = useState<number>(1.0005);
 
   // Addresses
   const [flashToken, setFlashToken] = useState<string>(POLYGON_TOKENS[0].address); // USDC.e
@@ -261,12 +261,12 @@ export default function App() {
     const calculatedRepay = parseFloat((f * (1 + fee)).toFixed(6));
     const calculatedBorrow = parseFloat((calculatedRepay + profit).toFixed(6));
     const slipFactor = Math.max(0.01, 1 - (slippage || 0) / 100);
-    const ltvRatio = Math.max(0.1, (ltv || 75) / 100);
+    const ltvRatio = Math.max(0.01, (ltv || 75) / 100);
     const calculatedDeposit = parseFloat(((calculatedBorrow / ltvRatio) / slipFactor).toFixed(6));
 
-    setRepayAmount(calculatedRepay);
-    setBorrowAmount(calculatedBorrow);
     setDepositAmount(calculatedDeposit);
+    setBorrowAmount(calculatedBorrow);
+    setRepayAmount(calculatedRepay);
   }, [flashAmount, feeTier, profitTarget, ltv, slippage, isLinked]);
 
   const handleResetAutoMath = useCallback(() => {
@@ -277,15 +277,15 @@ export default function App() {
     const calculatedRepay = parseFloat((f * (1 + fee)).toFixed(6));
     const calculatedBorrow = parseFloat((calculatedRepay + profit).toFixed(6));
     const slipFactor = Math.max(0.01, 1 - (slippage || 0) / 100);
-    const ltvRatio = Math.max(0.1, (ltv || 75) / 100);
+    const ltvRatio = Math.max(0.01, (ltv || 75) / 100);
     const calculatedDeposit = parseFloat(((calculatedBorrow / ltvRatio) / slipFactor).toFixed(6));
 
-    setRepayAmount(calculatedRepay);
-    setBorrowAmount(calculatedBorrow);
     setDepositAmount(calculatedDeposit);
+    setBorrowAmount(calculatedBorrow);
+    setRepayAmount(calculatedRepay);
     addLog(
       'info',
-      `Auto-calculated math: Debt=${calculatedRepay}, Borrow=${calculatedBorrow}, Deposit=${calculatedDeposit} (LTV: ${ltv}%, Slippage: ${slippage}%)`
+      `Auto-calculated execution amounts: Deposit Collateral=${calculatedDeposit}, Borrow Amount=${calculatedBorrow}, Repay Debt=${calculatedRepay} (Flashloan: ${flashAmount}, LTV: ${ltv}%, Slippage: ${slippage}%)`
     );
   }, [flashAmount, feeTier, profitTarget, ltv, slippage, addLog]);
 
@@ -575,16 +575,16 @@ export default function App() {
                 setLoops={setLoops}
                 isLinked={isLinked}
                 setIsLinked={setIsLinked}
-                repayAmount={repayAmount}
-                setRepayAmount={setRepayAmount}
-                borrowAmount={borrowAmount}
-                setBorrowAmount={setBorrowAmount}
                 depositAmount={depositAmount}
                 setDepositAmount={setDepositAmount}
+                borrowAmount={borrowAmount}
+                setBorrowAmount={setBorrowAmount}
+                repayAmount={repayAmount}
+                setRepayAmount={setRepayAmount}
                 onResetAutoMath={handleResetAutoMath}
-                repayWei={activeWei.repayWei}
-                borrowWei={activeWei.borrowWei}
                 depositWei={activeWei.depositWei}
+                borrowWei={activeWei.borrowWei}
+                repayWei={activeWei.repayWei}
                 tokenSymbol={flashTokenMeta.symbol}
                 collTokenSymbol={collTokenMeta.symbol}
                 uniPool={uniPool}
