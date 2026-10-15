@@ -76,9 +76,19 @@ export const POLYGON_PROTOCOLS = {
     description: 'Main Polygon Lending & Borrowing Pool',
   },
   uniswapV3UsdcUsdtPool: {
+    name: 'Uniswap V3 USDC.e/USDT (0.01%)',
+    address: '0xDaC8A8E6DBf8c690ec6815e0fF03491B2770255D',
+    description: 'Highest liquidity pool for USDT & USDC.e flashloans on Polygon',
+  },
+  uniswapV3UsdcUsdtPool500: {
     name: 'Uniswap V3 USDC.e/USDT (0.05%)',
+    address: '0x3F5228d0e7D75467366be7De2c31D0d098bA2C23',
+    description: '0.05% fee pool for USDT & USDC.e flashloans',
+  },
+  uniswapV3UsdcWethPool: {
+    name: 'Uniswap V3 USDC.e/WETH (0.05%)',
     address: '0x45dDa9cb7c25131DF268515131f647d726f50608',
-    description: 'High liquidity pool for flashloans & swaps',
+    description: 'Pool for USDC.e & WETH flashloans',
   },
   uniswapV3Router: {
     name: 'Uniswap V3 SwapRouter',
@@ -91,6 +101,44 @@ export const POLYGON_PROTOCOLS = {
     description: '0% fee flashloan vault',
   },
 };
+
+/**
+ * Returns the verified on-chain Uniswap V3 pool address containing the requested token
+ */
+export function getUniswapV3PoolForToken(tokenAddress: string, feeTierValue?: number): string {
+  const addr = (tokenAddress || '').toLowerCase();
+  // USDT
+  if (addr === '0xc2132d05d31c914a87c6611c10748aeb04b58e8f') {
+    return feeTierValue === 0.0005
+      ? '0x3F5228d0e7D75467366be7De2c31D0d098bA2C23'
+      : '0xDaC8A8E6DBf8c690ec6815e0fF03491B2770255D';
+  }
+  // USDC.e
+  if (addr === '0x2791bca1f2de4661ed88a30c99a7a9449aa84174') {
+    return '0xDaC8A8E6DBf8c690ec6815e0fF03491B2770255D';
+  }
+  // Native USDC
+  if (addr === '0x3c499c542cef5e3811e1192ce70d8cC03d5c3359') {
+    return '0x31083a78E11B18e450fd139F9ABEa98CD53181B7';
+  }
+  // WETH
+  if (addr === '0x7ceb23fd6bc0add59e62ac25578270cff1b9f619') {
+    return '0x45dDa9cb7c25131DF268515131f647d726f50608';
+  }
+  // POL / WMATIC
+  if (addr === '0x0d500b1d8e8ef31e21c99d1db9a6444d3adf1270') {
+    return '0x9B08288C3Be4F62bbf8d1C20Ac9C5e6f9467d8B7';
+  }
+  // DAI
+  if (addr === '0x8f3cf7ad23cd3cadbd9735aff958023239c6a063') {
+    return '0x254aa3A898071D6A2dA0DB11dA73b02B4646078F';
+  }
+  // WBTC
+  if (addr === '0x1bfd67037b42cf73acf2047067bd4f2c47d9bfd6') {
+    return '0x50eaEDB835021E4A108B7290636d62E9765cc6d7';
+  }
+  return '0xDaC8A8E6DBf8c690ec6815e0fF03491B2770255D';
+}
 
 export const FEE_TIERS = [
   { label: '0.05% (UniV3 500)', value: 0.0005 },

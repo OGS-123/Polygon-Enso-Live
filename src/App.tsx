@@ -14,7 +14,12 @@ import { TxPreview } from './components/TxPreview';
 import { LiveConsole } from './components/LiveConsole';
 import { ExportModal } from './components/ExportModal';
 import { ApiKeyModal } from './components/ApiKeyModal';
-import { POLYGON_TOKENS, POLYGON_PROTOCOLS, POLYGON_CHAIN_ID } from './constants/tokens';
+import {
+  POLYGON_TOKENS,
+  POLYGON_PROTOCOLS,
+  POLYGON_CHAIN_ID,
+  getUniswapV3PoolForToken,
+} from './constants/tokens';
 import {
   WalletState,
   connectWallet,
@@ -76,6 +81,12 @@ export default function App() {
   const [uniPool, setUniPool] = useState<string>(POLYGON_PROTOCOLS.uniswapV3UsdcUsdtPool.address);
   const [routingStrategy, setRoutingStrategy] = useState<string>('ensowallet-v2');
   const [walletAddress, setWalletAddress] = useState<string>('');
+
+  // Automatically keep Uniswap V3 pool aligned with chosen flashToken and fee tier
+  useEffect(() => {
+    const pool = getUniswapV3PoolForToken(flashToken, feeTier);
+    setUniPool(pool);
+  }, [flashToken, feeTier]);
 
   // Execution & Logs
   const [logs, setLogs] = useState<LogEntry[]>([]);
@@ -449,8 +460,14 @@ export default function App() {
       ? ZERO_CAPITAL_MIN
       : (collWei && collWei !== '0' ? collWei : ZERO_CAPITAL_MIN);
 
+    const resolvedPool =
+      uniPool &&
+      uniPool.toLowerCase() !== '0x45dda9cb7c25131df268515131f647d726f50608'
+        ? uniPool
+        : getUniswapV3PoolForToken(flashToken, feeTier);
+
     const flashloanArgs: any = {
-      primaryAddress: checksumAddressSafe(uniPool),
+      primaryAddress: checksumAddressSafe(resolvedPool),
       flashloanToken: checksumAddressSafe(flashToken),
       flashloanAmount: flashWei,
       tokenIn: [checksumAddressSafe(flashToken)],

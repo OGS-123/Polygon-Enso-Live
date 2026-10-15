@@ -81,6 +81,21 @@ function cleanShortcuts(shortcuts: any[]): any[] {
           delete args.tokenId;
         }
 
+        // Safeguard: Ensure primaryAddress (Uniswap V3 pool) contains the borrowed token
+        const currentPool = (args.primaryAddress || '').toLowerCase();
+        const borrowedToken = (args.tokenIn[0] || '').toLowerCase();
+        // 0x45dda9cb7c25131df268515131f647d726f50608 is USDC.e/WETH (does not contain USDT)
+        if (
+          currentPool === '0x45dda9cb7c25131df268515131f647d726f50608' &&
+          borrowedToken === '0xc2132d05d31c914a87c6611c10748aeb04b58e8f'
+        ) {
+          args.primaryAddress = checksumAddress('0xDaC8A8E6DBf8c690ec6815e0fF03491B2770255D');
+        } else if (!args.primaryAddress) {
+          args.primaryAddress = checksumAddress('0xDaC8A8E6DBf8c690ec6815e0fF03491B2770255D');
+        } else {
+          args.primaryAddress = checksumAddress(args.primaryAddress);
+        }
+
         if (args.tokenOut && typeof args.tokenOut === 'string') {
           args.tokenOut = checksumAddress(args.tokenOut);
         } else if (!args.tokenOut && args.tokenIn && args.tokenIn[0]) {

@@ -174,7 +174,7 @@ export const TokenAddressPicker: React.FC<TokenAddressPickerProps> = ({
               onClick={() => setUniPool(POLYGON_PROTOCOLS.uniswapV3UsdcUsdtPool.address)}
               className="text-[10px] text-purple-400 hover:text-purple-300"
             >
-              USDC.e/USDT (0.05%)
+              USDC.e/USDT (0.01%)
             </button>
           </div>
           <div className="relative">
