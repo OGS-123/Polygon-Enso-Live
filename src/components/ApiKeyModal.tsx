@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { Key, Eye, EyeOff, Check, AlertCircle, X, ExternalLink, Zap } from 'lucide-react';
-import { testEnsoConnection } from '../utils/ensoApi';
+import { Key, Eye, EyeOff, Check, AlertCircle, X, ExternalLink, Zap, Globe, Shield, RefreshCw } from 'lucide-react';
+import { testEnsoConnection, getGatewayMode, setGatewayMode, getProxyUrl, setProxyUrl, GatewayMode } from '../utils/ensoApi';
 
 interface ApiKeyModalProps {
   isOpen: boolean;
@@ -19,11 +19,14 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
 }) => {
   const [inputVal, setInputVal] = useState(apiKey);
   const [showKey, setShowKey] = useState(false);
+  const [gatewayMode, setGatewayModeState] = useState<GatewayMode>(getGatewayMode());
+  const [proxyUrlVal, setProxyUrlVal] = useState<string>(getProxyUrl());
   const [testResult, setTestResult] = useState<{
     tested: boolean;
     success: boolean;
     message: string;
     latencyMs?: number;
+    gatewayUsed?: string;
   } | null>(null);
   const [isTesting, setIsTesting] = useState(false);
 
@@ -32,7 +35,9 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
   const handleSave = () => {
     const clean = inputVal.trim();
     onSaveKey(clean);
-    onLog('success', `API Key saved (Length: ${clean.length} chars)`);
+    setGatewayMode(gatewayMode);
+    setProxyUrl(proxyUrlVal);
+    onLog('success', `API Key saved (Length: ${clean.length} chars, Gateway: ${gatewayMode})`);
     setTestResult(null);
     onClose();
   };
@@ -50,7 +55,11 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
 
     setIsTesting(true);
     setTestResult(null);
-    onLog('info', 'Testing connection to Enso API via /api/enso proxy...');
+    onLog('info', `Testing connection to Enso API via ${gatewayMode} gateway...`);
+
+    // Temporarily save current gateway selection for test
+    setGatewayMode(gatewayMode);
+    setProxyUrl(proxyUrlVal);
 
     const res = await testEnsoConnection(keyToTest);
     setIsTesting(false);
@@ -59,10 +68,11 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
       success: res.success,
       message: res.message,
       latencyMs: res.latencyMs,
+      gatewayUsed: res.gatewayUsed,
     });
 
     if (res.success) {
-      onLog('success', `Enso API test passed (${res.latencyMs}ms): ${res.message}`);
+      onLog('success', `Enso API test passed (${res.latencyMs}ms via ${res.gatewayUsed}): ${res.message}`);
     } else {
       onLog('warn', `Enso API test returned status ${res.status}: ${res.message}`);
     }
@@ -76,14 +86,14 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-      <div className="bg-[#12141f] border border-[#2a2e45] rounded-xl w-full max-w-lg p-5 sm:p-6 shadow-2xl space-y-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4">
+      <div className="bg-[#12141f] border border-[#2a2e45] rounded-xl w-full max-w-lg p-5 sm:p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-[#212538] pb-3">
           <div className="flex items-center gap-2">
             <Key className="w-5 h-5 text-purple-400" />
             <h2 className="text-base sm:text-lg font-bold text-white">
-              Enso Finance API Configuration
+              Enso Finance API &amp; Gateway Setup
             </h2>
           </div>
           <button
@@ -98,17 +108,16 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
         <div className="text-xs text-slate-300 space-y-1">
           <p>
             Your API Key is stored locally in your browser’s <code className="text-purple-300">localStorage (enso_key)</code>.
-            All shortcut bundle requests proxy through <code className="text-purple-300">/api/enso</code> to bypass CORS securely.
           </p>
           <div className="flex items-center gap-2 text-slate-400 pt-1">
-            <span>Don't have an Enso API key?</span>
+            <span>Need an Enso key?</span>
             <a
               href="https://docs.enso.finance"
               target="_blank"
               rel="noreferrer"
               className="text-purple-400 hover:text-purple-300 inline-flex items-center gap-1 font-medium"
             >
-              Get one at Enso.finance <ExternalLink className="w-3 h-3" />
+              Get one from Enso Portal <ExternalLink className="w-3 h-3" />
             </a>
           </div>
         </div>
@@ -141,6 +150,61 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
           </div>
         </div>
 
+        {/* API Gateway Mode Selector (Prevents 404 Vercel / Static issues) */}
+        <div className="bg-[#0a0b14] border border-[#1f2338] rounded-lg p-3 space-y-2">
+          <label className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+            <Globe className="w-3.5 h-3.5 text-purple-400" />
+            <span>Connection Gateway Mode</span>
+          </label>
+
+          <div className="grid grid-cols-3 gap-2">
+            <button
+              type="button"
+              onClick={() => setGatewayModeState('auto')}
+              className={`p-2 rounded text-left border transition-all ${
+                gatewayMode === 'auto'
+                  ? 'bg-purple-950/60 border-purple-500 text-purple-200 font-bold'
+                  : 'bg-[#121422] border-[#22273c] text-slate-400 hover:text-white'
+              }`}
+            >
+              <div className="text-[11px] font-semibold">Auto-Resilient</div>
+              <div className="text-[9px] opacity-75">Proxy with Direct Fallback</div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setGatewayModeState('direct')}
+              className={`p-2 rounded text-left border transition-all ${
+                gatewayMode === 'direct'
+                  ? 'bg-purple-950/60 border-purple-500 text-purple-200 font-bold'
+                  : 'bg-[#121422] border-[#22273c] text-slate-400 hover:text-white'
+              }`}
+            >
+              <div className="text-[11px] font-semibold">Direct Enso API</div>
+              <div className="text-[9px] opacity-75">Browser CORS directly</div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setGatewayModeState('proxy')}
+              className={`p-2 rounded text-left border transition-all ${
+                gatewayMode === 'proxy'
+                  ? 'bg-purple-950/60 border-purple-500 text-purple-200 font-bold'
+                  : 'bg-[#121422] border-[#22273c] text-slate-400 hover:text-white'
+              }`}
+            >
+              <div className="text-[11px] font-semibold">Server Proxy</div>
+              <div className="text-[9px] opacity-75">/api/enso endpoint</div>
+            </button>
+          </div>
+
+          <div className="text-[10px] text-slate-400">
+            {gatewayMode === 'auto' && 'Recommended: Attempts serverless proxy first, automatically falls back to Direct Enso API if 404 is received.'}
+            {gatewayMode === 'direct' && 'Connects directly to https://api.enso.finance/api/v1/shortcuts/bundle via browser CORS. Perfect for Vercel/Netlify static deployments.'}
+            {gatewayMode === 'proxy' && 'Sends all bundle requests strictly through local Express/Vercel serverless proxy (/api/enso).'}
+          </div>
+        </div>
+
         {/* Test Result Feedback */}
         {testResult && (
           <div
@@ -156,8 +220,13 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
               <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
             )}
             <div>
-              <div className="font-semibold">
-                {testResult.success ? 'Connection Verified' : 'Check Warning / Response'}
+              <div className="font-semibold flex items-center gap-2">
+                <span>{testResult.success ? 'Connection Verified' : 'Check Warning / Response'}</span>
+                {testResult.gatewayUsed && (
+                  <span className="text-[10px] px-1.5 py-0.2 rounded bg-black/40 text-slate-300 font-mono">
+                    {testResult.gatewayUsed}
+                  </span>
+                )}
               </div>
               <div className="text-[11px] opacity-90 mt-0.5">{testResult.message}</div>
               {testResult.latencyMs !== undefined && (
@@ -193,7 +262,7 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
               onClick={handleSave}
               className="px-4 py-2 text-xs font-semibold rounded-lg bg-purple-600 hover:bg-purple-500 text-white transition-colors"
             >
-              Save Key
+              Save Configuration
             </button>
           </div>
         </div>

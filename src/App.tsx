@@ -63,6 +63,7 @@ export default function App() {
   const [collToken, setCollToken] = useState<string>(POLYGON_TOKENS[1].address); // USDT
   const [aavePool, setAavePool] = useState<string>(POLYGON_PROTOCOLS.aaveV3Pool.address);
   const [uniPool, setUniPool] = useState<string>(POLYGON_PROTOCOLS.uniswapV3UsdcUsdtPool.address);
+  const [routingStrategy, setRoutingStrategy] = useState<string>('ensowallet-v2');
   const [walletAddress, setWalletAddress] = useState<string>('');
 
   // Execution & Logs
@@ -375,7 +376,7 @@ export default function App() {
       fromAddress: fromAddr,
       receiver: fromAddr,
       spender: fromAddr,
-      routingStrategy: 'ensowallet-v2',
+      routingStrategy: routingStrategy || 'ensowallet-v2',
       shortcuts: shortcutsList,
     };
   }, [
@@ -386,6 +387,7 @@ export default function App() {
     flashToken,
     collToken,
     aavePool,
+    routingStrategy,
   ]);
 
   // 1. Build Bundle Handler
@@ -401,11 +403,19 @@ export default function App() {
       return;
     }
 
+    const minRequiredDebt = flashAmount * (1 + feeTier);
+    if (borrowAmount < minRequiredDebt - 0.000001) {
+      addLog(
+        'warn',
+        `Warning: Borrow amount (${borrowAmount} ${flashTokenMeta.symbol}) is LESS than required debt (${minRequiredDebt.toFixed(4)} ${flashTokenMeta.symbol}). Enso simulation may return "Flashloan repayment insufficient".`
+      );
+    }
+
     setIsBuilding(true);
     setTxHash(null);
     addLog(
       'info',
-      `Building bundle: Flashloan=${flashAmount} ${flashTokenMeta.symbol}, Borrow=${borrowAmount.toFixed(4)}, Loops=${loops}...`
+      `Building bundle: Flashloan=${flashAmount} ${flashTokenMeta.symbol}, Borrow=${borrowAmount.toFixed(4)}, Loops=${loops}, Strategy=${routingStrategy}...`
     );
 
     try {
@@ -423,7 +433,19 @@ export default function App() {
         addLog('warn', `Bundle returned with empty calldata (0x): ${JSON.stringify(response).slice(0, 200)}`);
       }
     } catch (err: any) {
-      addLog('error', `Bundle build failed: ${err.message}`);
+      const errMsg = err?.message || String(err);
+      addLog('error', `Bundle build failed: ${errMsg}`);
+      if (errMsg.includes('Flashloan repayment insufficient') || errMsg.includes('debt')) {
+        addLog(
+          'warn',
+          'Fix: Borrow amount is lower than flashloan debt repayment. Click "Auto-Fix Borrow" or "Safe Auto-Balance" in the Parameters panel.'
+        );
+      } else if (errMsg.includes('404')) {
+        addLog(
+          'warn',
+          'Fix: Proxy 404 received. Open "Set Enso Key" and switch Gateway Mode to "Direct Enso API" to bypass proxy.'
+        );
+      }
     } finally {
       setIsBuilding(false);
     }
@@ -565,6 +587,12 @@ export default function App() {
                 depositWei={activeWei.depositWei}
                 tokenSymbol={flashTokenMeta.symbol}
                 collTokenSymbol={collTokenMeta.symbol}
+                uniPool={uniPool}
+                setUniPool={setUniPool}
+                aavePool={aavePool}
+                setAavePool={setAavePool}
+                routingStrategy={routingStrategy}
+                setRoutingStrategy={setRoutingStrategy}
               />
 
               <TokenAddressPicker

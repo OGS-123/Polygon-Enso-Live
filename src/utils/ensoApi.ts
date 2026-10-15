@@ -22,19 +22,147 @@ export function fromTokenWei(amountWei: string | bigint, decimals: number = 6): 
   }
 }
 
-export async function testEnsoConnection(apiKey: string): Promise<{ success: boolean; message: string; status: number; latencyMs: number }> {
-  const start = performance.now();
-  try {
-    const dummyPayload = {
-      chainId: 137,
-      fromAddress: '0x000000000000000000000000000000000000dEaD',
-      receiver: '0x000000000000000000000000000000000000dEaD',
-      spender: '0x000000000000000000000000000000000000dEaD',
-      routingStrategy: 'ensowallet-v2',
-      shortcuts: [],
-    };
+export type GatewayMode = 'auto' | 'direct' | 'proxy';
 
-    const res = await fetch('/api/enso', {
+export function getGatewayMode(): GatewayMode {
+  if (typeof window !== 'undefined') {
+    const mode = localStorage.getItem('enso_gateway_mode') as GatewayMode;
+    if (mode === 'direct' || mode === 'proxy' || mode === 'auto') return mode;
+  }
+  return 'auto';
+}
+
+export function setGatewayMode(mode: GatewayMode): void {
+  if (typeof window !== 'undefined') {
+    localStorage.setItem('enso_gateway_mode', mode);
+  }
+}
+
+export function getProxyUrl(): string {
+  if (typeof window !== 'undefined') {
+    return localStorage.getItem('enso_proxy_url') || '/api/enso';
+  }
+  return '/api/enso';
+}
+
+export function setProxyUrl(url: string): void {
+  if (typeof window !== 'undefined') {
+    if (url && url.trim() && url.trim() !== '/api/enso') {
+      localStorage.setItem('enso_proxy_url', url.trim());
+    } else {
+      localStorage.removeItem('enso_proxy_url');
+    }
+  }
+}
+
+// Direct Enso API call implementation
+async function callDirectEnsoApi(
+  payload: EnsoBundlePayload,
+  apiKey: string
+): Promise<{ ok: boolean; status: number; text: string; json: any }> {
+  const chainId = payload.chainId || 137;
+  const fromAddress = checksumAddressSafe(payload.fromAddress) || payload.fromAddress;
+  const receiver = checksumAddressSafe(payload.receiver || fromAddress) || fromAddress;
+  const spender = checksumAddressSafe(payload.spender || fromAddress) || fromAddress;
+  const routingStrategy = payload.routingStrategy || 'ensowallet-v2';
+
+  const params = new URLSearchParams();
+  params.set('chainId', String(chainId));
+  params.set('fromAddress', fromAddress);
+  if (receiver) params.set('receiver', receiver);
+  if (spender) params.set('spender', spender);
+  if (routingStrategy) params.set('routingStrategy', routingStrategy);
+
+  const directUrl = `https://api.enso.finance/api/v1/shortcuts/bundle?${params.toString()}`;
+
+  // Call query-param style first with shortcuts array in body
+  let res = await fetch(directUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey.trim()}`,
+      Accept: 'application/json',
+    },
+    body: JSON.stringify(payload.shortcuts || []),
+  });
+
+  let text = await res.text();
+  let json: any = null;
+  try {
+    json = JSON.parse(text);
+  } catch {}
+
+  // If query-param style was not ok, try full body payload
+  if (!res.ok && payload.shortcuts && payload.shortcuts.length > 0) {
+    const fallbackRes = await fetch('https://api.enso.finance/api/v1/shortcuts/bundle', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey.trim()}`,
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({
+        chainId,
+        fromAddress,
+        receiver,
+        spender,
+        routingStrategy,
+        shortcuts: payload.shortcuts,
+      }),
+    });
+
+    const fallbackText = await fallbackRes.text();
+    let fallbackJson: any = null;
+    try {
+      fallbackJson = JSON.parse(fallbackText);
+    } catch {}
+
+    if (fallbackRes.ok) {
+      return { ok: true, status: fallbackRes.status, text: fallbackText, json: fallbackJson };
+    }
+  }
+
+  return { ok: res.ok, status: res.status, text, json };
+}
+
+export async function testEnsoConnection(apiKey: string): Promise<{
+  success: boolean;
+  message: string;
+  status: number;
+  latencyMs: number;
+  gatewayUsed: string;
+}> {
+  const start = performance.now();
+  const gatewayMode = getGatewayMode();
+  const proxyUrl = getProxyUrl();
+
+  const dummyPayload: EnsoBundlePayload = {
+    chainId: 137,
+    fromAddress: '0x000000000000000000000000000000000000dEaD',
+    receiver: '0x000000000000000000000000000000000000dEaD',
+    spender: '0x000000000000000000000000000000000000dEaD',
+    routingStrategy: 'ensowallet-v2',
+    shortcuts: [],
+  };
+
+  // If direct mode selected, test Enso directly
+  if (gatewayMode === 'direct') {
+    const directRes = await callDirectEnsoApi(dummyPayload, apiKey);
+    const latencyMs = Math.round(performance.now() - start);
+    return {
+      success: directRes.status < 500,
+      message: directRes.ok
+        ? 'Direct connection to Enso API successful'
+        : `Enso responded (${directRes.status}): ${directRes.text.slice(0, 140)}`,
+      status: directRes.status,
+      latencyMs,
+      gatewayUsed: 'Direct Enso API',
+    };
+  }
+
+  // Otherwise test proxy
+  try {
+    const res = await fetch(proxyUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -46,16 +174,31 @@ export async function testEnsoConnection(apiKey: string): Promise<{ success: boo
     const latencyMs = Math.round(performance.now() - start);
     const text = await res.text();
 
+    if (res.status === 404 && gatewayMode === 'auto') {
+      // Auto-fallback to direct API
+      const directRes = await callDirectEnsoApi(dummyPayload, apiKey);
+      const totalLatency = Math.round(performance.now() - start);
+      return {
+        success: directRes.status < 500,
+        message: directRes.ok
+          ? 'Proxy 404 bypassed. Direct Enso API connection active & verified!'
+          : `Direct Enso responded (${directRes.status}): ${directRes.text.slice(0, 140)}`,
+        status: directRes.status,
+        latencyMs: totalLatency,
+        gatewayUsed: 'Direct Fallback (Auto)',
+      };
+    }
+
     if (res.status === 401 || res.status === 403) {
       return {
         success: false,
         message: 'Invalid API Key or unauthorized by Enso Finance',
         status: res.status,
         latencyMs,
+        gatewayUsed: proxyUrl,
       };
     }
 
-    // 200 or 400 with valid Enso JSON error response confirms API endpoint communication
     return {
       success: res.status < 500,
       message: res.ok
@@ -63,13 +206,38 @@ export async function testEnsoConnection(apiKey: string): Promise<{ success: boo
         : `Enso responded (${res.status}): ${text.slice(0, 140)}`,
       status: res.status,
       latencyMs,
+      gatewayUsed: proxyUrl,
     };
   } catch (err: any) {
+    if (gatewayMode === 'auto') {
+      try {
+        const directRes = await callDirectEnsoApi(dummyPayload, apiKey);
+        return {
+          success: directRes.status < 500,
+          message: directRes.ok
+            ? 'Proxy unavailable. Direct Enso connection succeeded!'
+            : `Direct Enso responded (${directRes.status}): ${directRes.text.slice(0, 140)}`,
+          status: directRes.status,
+          latencyMs: Math.round(performance.now() - start),
+          gatewayUsed: 'Direct Fallback (Auto)',
+        };
+      } catch (directErr: any) {
+        return {
+          success: false,
+          message: directErr?.message || 'Connection failed',
+          status: 500,
+          latencyMs: Math.round(performance.now() - start),
+          gatewayUsed: 'Direct Fallback (Auto)',
+        };
+      }
+    }
+
     return {
       success: false,
       message: err?.message || 'Connection failed',
       status: 500,
       latencyMs: Math.round(performance.now() - start),
+      gatewayUsed: proxyUrl,
     };
   }
 }
@@ -78,28 +246,75 @@ export async function buildEnsoBundle(
   payload: EnsoBundlePayload,
   apiKey: string
 ): Promise<EnsoBundleResponse> {
-  const cleanPayload = {
+  const cleanPayload: EnsoBundlePayload = {
     ...payload,
-    fromAddress: checksumAddressSafe(payload.fromAddress),
-    receiver: checksumAddressSafe(payload.receiver || payload.fromAddress),
-    spender: checksumAddressSafe(payload.spender || payload.fromAddress),
+    fromAddress: checksumAddressSafe(payload.fromAddress) || payload.fromAddress,
+    receiver: checksumAddressSafe(payload.receiver || payload.fromAddress) || payload.fromAddress,
+    spender: checksumAddressSafe(payload.spender || payload.fromAddress) || payload.fromAddress,
   };
 
-  const res = await fetch('/api/enso', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey.trim()}`,
-    },
-    body: JSON.stringify(cleanPayload),
-  });
+  const gatewayMode = getGatewayMode();
+  const proxyUrl = getProxyUrl();
 
-  const text = await res.text();
+  // If direct mode selected
+  if (gatewayMode === 'direct') {
+    const directRes = await callDirectEnsoApi(cleanPayload, apiKey);
+    if (!directRes.ok) {
+      let errMsg = directRes.json?.message || directRes.json?.error || directRes.text || `Enso API Error (Status ${directRes.status})`;
+      if (Array.isArray(errMsg)) errMsg = errMsg.join(', ');
+      else if (typeof errMsg === 'object') errMsg = JSON.stringify(errMsg);
+      throw new Error(String(errMsg));
+    }
+    return directRes.json as EnsoBundleResponse;
+  }
+
+  // Try proxy first
+  let res: Response | null = null;
+  let text = '';
   let json: any = null;
+
   try {
-    json = JSON.parse(text);
-  } catch {
-    json = { message: text };
+    res = await fetch(proxyUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey.trim()}`,
+      },
+      body: JSON.stringify(cleanPayload),
+    });
+
+    text = await res.text();
+    try {
+      json = JSON.parse(text);
+    } catch {
+      json = { message: text };
+    }
+  } catch (netErr: any) {
+    if (gatewayMode === 'auto') {
+      console.warn('Proxy fetch failed, falling back to direct Enso API:', netErr);
+      const directRes = await callDirectEnsoApi(cleanPayload, apiKey);
+      if (!directRes.ok) {
+        let errMsg = directRes.json?.message || directRes.json?.error || directRes.text || `Enso API Error (Status ${directRes.status})`;
+        if (Array.isArray(errMsg)) errMsg = errMsg.join(', ');
+        else if (typeof errMsg === 'object') errMsg = JSON.stringify(errMsg);
+        throw new Error(String(errMsg));
+      }
+      return directRes.json as EnsoBundleResponse;
+    }
+    throw netErr;
+  }
+
+  // If proxy returned 404 (e.g. Vercel static hosting issue), auto-fallback to direct Enso API
+  if (res.status === 404 && gatewayMode === 'auto') {
+    console.log('Proxy returned 404. Attempting automatic fallback to Direct Enso API...');
+    const directRes = await callDirectEnsoApi(cleanPayload, apiKey);
+    if (!directRes.ok) {
+      let errMsg = directRes.json?.message || directRes.json?.error || directRes.text || `Enso API Error (Status ${directRes.status})`;
+      if (Array.isArray(errMsg)) errMsg = errMsg.join(', ');
+      else if (typeof errMsg === 'object') errMsg = JSON.stringify(errMsg);
+      throw new Error(String(errMsg));
+    }
+    return directRes.json as EnsoBundleResponse;
   }
 
   if (!res.ok) {
@@ -121,6 +336,15 @@ export function generateCurlSnippet(payload: EnsoBundlePayload, apiKey: string):
   -H "Content-Type: application/json" \\
   -H "Authorization: Bearer ${apiKey || 'YOUR_ENSO_API_KEY'}" \\
   -d '${JSON.stringify(payload, null, 2)}'`;
+}
+
+export function generateDirectCurlSnippet(payload: EnsoBundlePayload, apiKey: string): string {
+  const chainId = payload.chainId || 137;
+  const fromAddress = payload.fromAddress;
+  return `curl -X POST "https://api.enso.finance/api/v1/shortcuts/bundle?chainId=${chainId}&fromAddress=${fromAddress}&routingStrategy=ensowallet-v2" \\
+  -H "Content-Type: application/json" \\
+  -H "Authorization: Bearer ${apiKey || 'YOUR_ENSO_API_KEY'}" \\
+  -d '${JSON.stringify(payload.shortcuts, null, 2)}'`;
 }
 
 export function generateNodeFallbackScript(payload: EnsoBundlePayload, apiKey: string): string {
