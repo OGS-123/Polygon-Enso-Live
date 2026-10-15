@@ -19,6 +19,7 @@ import {
   Info,
 } from 'lucide-react';
 import { FEE_TIERS } from '../constants/tokens';
+import { calculateLoopingDynamics } from '../utils/loopingMath';
 
 export interface CalculatedParams {
   repay: number;
@@ -101,6 +102,9 @@ export const ParamForm: React.FC<ParamFormProps> = ({
   setRoutingStrategy,
 }) => {
   const [showAdvanced, setShowAdvanced] = useState(false);
+
+  // Looping & recursive leverage dynamics
+  const loopDynamics = calculateLoopingDynamics(flashAmount, ltv, loops, feeTier);
 
   // Exact required flashloan debt to repay
   const minRequiredDebt = flashAmount * (1 + feeTier);
@@ -322,20 +326,57 @@ export const ParamForm: React.FC<ParamFormProps> = ({
         </div>
 
         {/* 4. Loops Count */}
-        <div>
-          <label className="text-[11px] font-semibold text-slate-300 block mb-1">
-            Loop Iterations
-          </label>
-          <input
-            type="number"
-            min="1"
-            max="10"
-            step="1"
-            value={loops}
-            onChange={(e) => setLoops(Math.max(1, Math.min(10, parseInt(e.target.value) || 1)))}
-            className="w-full bg-[#0a0b12] border border-[#262a3f] rounded px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-purple-500"
-          />
-          <span className="text-[10px] text-slate-500 mt-2 block">Folding cycles (1-10)</span>
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between">
+            <label className="text-[11px] font-semibold text-slate-300 block">
+              Loop Iterations
+            </label>
+            <span className="text-[10px] font-mono text-purple-300 font-bold">
+              {loopDynamics.collateralMultiplier.toFixed(2)}x Multiplier
+            </span>
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            <input
+              type="number"
+              min="1"
+              max="10"
+              step="1"
+              value={loops}
+              onChange={(e) => setLoops(Math.max(1, Math.min(10, parseInt(e.target.value) || 1)))}
+              className="w-16 bg-[#0a0b12] border border-[#262a3f] rounded px-2.5 py-1.5 text-xs font-mono font-bold text-white focus:outline-none focus:border-purple-500"
+            />
+            {/* Loop Presets */}
+            <div className="flex gap-1 flex-1">
+              {[1, 2, 3, 4, 5].map((val) => (
+                <button
+                  key={val}
+                  type="button"
+                  onClick={() => setLoops(val)}
+                  className={`text-[10px] px-1 py-1 rounded flex-1 font-mono transition-colors ${
+                    loops === val
+                      ? 'bg-purple-600 text-white font-bold'
+                      : 'bg-[#1b1f33] text-slate-400 hover:text-white'
+                  }`}
+                >
+                  {val}x{val >= 3 ? '✨' : ''}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono">
+            <span>
+              {loopDynamics.isDoubled ? (
+                <span className="text-emerald-400 font-bold">✨ Collateral Doubled!</span>
+              ) : (
+                <span>{loopDynamics.doublingPercentage}% to 2.0x</span>
+              )}
+            </span>
+            <span className="text-purple-300 font-semibold">
+              Net Δ: +{loopDynamics.difference.toFixed(4)}
+            </span>
+          </div>
         </div>
       </div>
 
@@ -506,6 +547,39 @@ export const ParamForm: React.FC<ParamFormProps> = ({
             </button>
           </div>
         </div>
+
+        {/* Compounding Looping Status Banner (when loops > 1) */}
+        {loops > 1 && (
+          <div className="bg-[#121629] border border-purple-800/70 rounded-lg p-3 flex flex-wrap items-center justify-between gap-2.5 text-xs">
+            <div className="flex items-center gap-2.5">
+              <span className="px-2 py-0.5 rounded bg-purple-900/80 text-purple-200 border border-purple-700/60 font-mono font-bold text-[11px]">
+                {loops} Cycles Active
+              </span>
+              <div>
+                <div className="text-[11px] font-bold text-white flex items-center gap-1.5">
+                  <span>Recursive Compounding:</span>
+                  <span className="text-purple-300 font-mono font-extrabold">
+                    {loopDynamics.collateralMultiplier.toFixed(2)}x Collateral Multiplier
+                  </span>
+                  {loopDynamics.isDoubled && (
+                    <span className="text-[9px] px-1.5 py-0.2 rounded bg-emerald-950 text-emerald-300 border border-emerald-800 font-bold">
+                      ✨ Doubled!
+                    </span>
+                  )}
+                </div>
+                <div className="text-[10px] text-slate-400 font-mono mt-0.5">
+                  Total Collateral: <span className="text-sky-300 font-bold">{loopDynamics.totalCollateral.toFixed(4)} {collTokenSymbol}</span> &bull; 
+                  Total Debt: <span className="text-amber-300 font-bold">{loopDynamics.totalBorrowDebt.toFixed(4)} {tokenSymbol}</span> &bull; 
+                  Net Difference (&Delta;): <span className="text-emerald-300 font-bold">+{loopDynamics.difference.toFixed(4)}</span>
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 text-[10px] font-mono text-slate-400 bg-[#090b14] px-2.5 py-1.5 rounded border border-[#1e233d]">
+              <span>Health Factor:</span>
+              <span className="text-emerald-400 font-bold">{loopDynamics.healthFactor} (Safe)</span>
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           {/* Parameter 1: Deposit Collateral (Matches Flashloan, 0 Upfront) */}

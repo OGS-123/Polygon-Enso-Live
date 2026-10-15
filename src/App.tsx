@@ -8,6 +8,8 @@ import { Header } from './components/Header';
 import { ParamForm, CalculatedParams } from './components/ParamForm';
 import { TokenAddressPicker } from './components/TokenAddressPicker';
 import { BundleVisualizer } from './components/BundleVisualizer';
+import { LoopingDynamicsCard } from './components/LoopingDynamicsCard';
+import { calculateLoopingDynamics } from './utils/loopingMath';
 import { TxPreview } from './components/TxPreview';
 import { LiveConsole } from './components/LiveConsole';
 import { ExportModal } from './components/ExportModal';
@@ -319,6 +321,112 @@ export default function App() {
     const borrowWei = activeWei.borrowWei;
     const slippageBps = String(Math.round(slippage * 100)); // 0.5% = 50 BPS
 
+    const dynamics = calculateLoopingDynamics(flashAmount, ltv, loops, feeTier);
+    const callbackList: any[] = [];
+
+    // Cycle 1:
+    // Call 0: Route flashloan USDC -> USDT
+    callbackList.push({
+      protocol: 'enso',
+      action: 'route',
+      args: {
+        tokenIn: checksumAddressSafe(flashToken),
+        tokenOut: checksumAddressSafe(collToken),
+        amountIn: flashWei,
+        slippage: slippageBps,
+      },
+    });
+    // Call 1: Check balance of USDT received
+    callbackList.push({
+      protocol: 'enso',
+      action: 'balance',
+      args: {
+        token: checksumAddressSafe(collToken),
+      },
+    });
+    // Call 2: Deposit USDT into Aave V3 using output of balance check
+    callbackList.push({
+      protocol: 'aave-v3',
+      action: 'deposit',
+      args: {
+        primaryAddress: checksumAddressSafe(aavePool),
+        tokenIn: checksumAddressSafe(collToken),
+        tokenOut: checksumAddressSafe(collToken),
+        amountIn: { useOutputOfCallAt: 1 },
+        onBehalfOf: fromAddr,
+      },
+    });
+    // Call 3: Borrow USDC from Aave V3
+    const cycle1BorrowWei =
+      loops === 1 ? borrowWei : toTokenWei(dynamics.iterations[0].borrowAmount, flashTokenMeta.decimals);
+    callbackList.push({
+      protocol: 'aave-v3',
+      action: 'borrow',
+      args: {
+        primaryAddress: checksumAddressSafe(aavePool),
+        tokenOut: checksumAddressSafe(flashToken),
+        amountOut: cycle1BorrowWei,
+        onBehalfOf: fromAddr,
+      },
+    });
+
+    // Subsequent folding cycles if loops > 1
+    for (let k = 2; k <= loops; k++) {
+      const prevBorrowIndex = callbackList.length - 1;
+      const stepInfo = dynamics.iterations[k - 1];
+      const stepBorrowWei =
+        k === loops && isLinked
+          ? borrowWei
+          : toTokenWei(stepInfo.borrowAmount, flashTokenMeta.decimals);
+
+      // Route borrowed USDC to USDT
+      callbackList.push({
+        protocol: 'enso',
+        action: 'route',
+        args: {
+          tokenIn: checksumAddressSafe(flashToken),
+          tokenOut: checksumAddressSafe(collToken),
+          amountIn: { useOutputOfCallAt: prevBorrowIndex },
+          slippage: slippageBps,
+        },
+      });
+
+      // Check balance of USDT
+      const balIndex = callbackList.length;
+      callbackList.push({
+        protocol: 'enso',
+        action: 'balance',
+        args: {
+          token: checksumAddressSafe(collToken),
+        },
+      });
+
+      // Deposit USDT into Aave V3
+      callbackList.push({
+        protocol: 'aave-v3',
+        action: 'deposit',
+        args: {
+          primaryAddress: checksumAddressSafe(aavePool),
+          tokenIn: checksumAddressSafe(collToken),
+          tokenOut: checksumAddressSafe(collToken),
+          amountIn: { useOutputOfCallAt: balIndex },
+          onBehalfOf: fromAddr,
+        },
+      });
+
+      // Borrow USDC from Aave V3
+      callbackList.push({
+        protocol: 'aave-v3',
+        action: 'borrow',
+        args: {
+          primaryAddress: checksumAddressSafe(aavePool),
+          tokenOut: checksumAddressSafe(flashToken),
+          amountOut: stepBorrowWei,
+          onBehalfOf: fromAddr,
+        },
+      });
+    }
+
     const shortcutsList = [
       {
         protocol: 'uniswap-v3',
@@ -331,46 +439,7 @@ export default function App() {
           amountIn: collWei,
           tokenOut: checksumAddressSafe(flashToken),
           receiver: fromAddr,
-          callback: [
-            {
-              protocol: 'enso',
-              action: 'route',
-              args: {
-                tokenIn: checksumAddressSafe(flashToken),
-                tokenOut: checksumAddressSafe(collToken),
-                amountIn: flashWei,
-                slippage: slippageBps,
-              },
-            },
-            {
-              protocol: 'enso',
-              action: 'balance',
-              args: {
-                token: checksumAddressSafe(collToken),
-              },
-            },
-            {
-              protocol: 'aave-v3',
-              action: 'deposit',
-              args: {
-                primaryAddress: checksumAddressSafe(aavePool),
-                tokenIn: checksumAddressSafe(collToken),
-                tokenOut: checksumAddressSafe(collToken),
-                amountIn: { useOutputOfCallAt: 1 },
-                onBehalfOf: fromAddr,
-              },
-            },
-            {
-              protocol: 'aave-v3',
-              action: 'borrow',
-              args: {
-                primaryAddress: checksumAddressSafe(aavePool),
-                tokenOut: checksumAddressSafe(flashToken),
-                amountOut: borrowWei,
-                onBehalfOf: fromAddr,
-              },
-            },
-          ],
+          callback: callbackList,
         },
       },
     ];
@@ -392,6 +461,12 @@ export default function App() {
     collToken,
     aavePool,
     routingStrategy,
+    loops,
+    flashAmount,
+    ltv,
+    feeTier,
+    isLinked,
+    flashTokenMeta.decimals,
   ]);
 
   // 1. Build Bundle Handler
@@ -614,6 +689,17 @@ export default function App() {
               />
             </div>
 
+            {/* Recursive Looping & Leverage Dynamics Details (Collateral Doubling & Equations) */}
+            <LoopingDynamicsCard
+              flashAmount={flashAmount}
+              ltv={ltv}
+              loops={loops}
+              setLoops={setLoops}
+              feeTier={feeTier}
+              tokenSymbol={flashTokenMeta.symbol}
+              collTokenSymbol={collTokenMeta.symbol}
+            />
+
             {/* Visual Flow Diagram */}
             <BundleVisualizer
               flashTokenSymbol={flashTokenMeta.symbol}
@@ -626,6 +712,7 @@ export default function App() {
               }}
               ltv={ltv}
               slippage={slippage}
+              loops={loops}
             />
 
             {/* Transaction Builder & Execution Card */}
@@ -645,6 +732,16 @@ export default function App() {
         {/* Tab 2: Bundle Inspector View */}
         {activeTab === 'inspector' && (
           <div className="space-y-5">
+            <LoopingDynamicsCard
+              flashAmount={flashAmount}
+              ltv={ltv}
+              loops={loops}
+              setLoops={setLoops}
+              feeTier={feeTier}
+              tokenSymbol={flashTokenMeta.symbol}
+              collTokenSymbol={collTokenMeta.symbol}
+            />
+
             <BundleVisualizer
               flashTokenSymbol={flashTokenMeta.symbol}
               collTokenSymbol={collTokenMeta.symbol}
@@ -656,6 +753,7 @@ export default function App() {
               }}
               ltv={ltv}
               slippage={slippage}
+              loops={loops}
             />
 
             <TxPreview
