@@ -20,6 +20,18 @@ function cleanShortcuts(shortcuts: any[]): any[] {
     const item = { ...s };
     if (item.args && typeof item.args === 'object') {
       const args = { ...item.args };
+      
+      // Enso API requires amountIn > 0 at action index [0]. If 0, empty, or missing, default to '1' (1 wei) to satisfy Enso validation
+      if (
+        args.amountIn === '0' ||
+        args.amountIn === 0 ||
+        args.amountIn === '' ||
+        !args.amountIn ||
+        (typeof args.amountIn === 'string' && /^0+(\.0+)?$/.test(args.amountIn.trim()))
+      ) {
+        args.amountIn = '1';
+      }
+
       const addressKeys = [
         'primaryAddress',
         'flashloanToken',

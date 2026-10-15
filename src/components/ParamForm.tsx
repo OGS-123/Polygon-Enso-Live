@@ -688,24 +688,37 @@ export const ParamForm: React.FC<ParamFormProps> = ({
                 <span className="text-sky-300 font-mono">{collTokenSymbol}</span>
               </div>
               <input
-                type="number"
+                type={isZeroCap ? "text" : "number"}
                 step="any"
-                value={depositAmount || ''}
+                value={isZeroCap ? "0 (zero capital → uses 1 wei internally)" : (depositAmount || '')}
+                disabled={isZeroCap}
                 onChange={(e) => {
+                  if (isZeroCap) return;
                   setIsLinked(false);
                   setDepositAmount(parseFloat(e.target.value) || 0);
                 }}
-                className="w-full bg-[#07080e] border border-[#2b304a] text-sky-200 focus:border-purple-500 rounded px-2.5 py-1.5 text-xs font-mono font-bold focus:outline-none"
+                className={`w-full bg-[#07080e] border ${
+                  isZeroCap
+                    ? 'border-purple-800/80 text-purple-300/90 cursor-not-allowed bg-purple-950/20'
+                    : 'border-[#2b304a] text-sky-200 focus:border-purple-500'
+                } rounded px-2.5 py-1.5 text-xs font-mono font-bold focus:outline-none`}
               />
               <div className="flex items-center justify-between text-[9px] text-slate-400 pt-0.5">
-                <span>100% Flash-funded:</span>
-                <button
-                  type="button"
-                  onClick={handleAutoFixDeposit}
-                  className="text-purple-400 hover:underline flex items-center gap-0.5"
-                >
-                  <RefreshCw className="w-2 h-2" /> Match Flashloan
-                </button>
+                <span>{isZeroCap ? 'Validation mode:' : '100% Flash-funded:'}</span>
+                {isZeroCap ? (
+                  <span className="text-purple-300 font-mono text-[9px] flex items-center gap-1">
+                    <ShieldCheck className="w-2.5 h-2.5 text-emerald-400" />
+                    Zero Capital (1 wei pass)
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleAutoFixDeposit}
+                    className="text-purple-400 hover:underline flex items-center gap-0.5"
+                  >
+                    <RefreshCw className="w-2 h-2" /> Match Flashloan
+                  </button>
+                )}
               </div>
             </div>
 

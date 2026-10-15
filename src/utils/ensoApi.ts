@@ -55,6 +55,65 @@ export function setProxyUrl(url: string): void {
   }
 }
 
+// Sanitize shortcuts: strip zero amountIn and checksum addresses
+export function cleanShortcuts(shortcuts: any[]): any[] {
+  if (!Array.isArray(shortcuts)) return [];
+  return shortcuts.map((s) => {
+    if (!s || typeof s !== 'object') return s;
+    const item = { ...s };
+    if (item.args && typeof item.args === 'object') {
+      const args = { ...item.args };
+
+      // Enso API requires amountIn > 0 at action index [0]. If 0, empty, or missing, default to '1' (1 wei) to satisfy Enso validation
+      if (
+        args.amountIn === '0' ||
+        args.amountIn === 0 ||
+        args.amountIn === '' ||
+        !args.amountIn ||
+        (typeof args.amountIn === 'string' && /^0+(\.0+)?$/.test(args.amountIn.trim()))
+      ) {
+        args.amountIn = '1';
+      }
+
+      const addressKeys = [
+        'primaryAddress',
+        'flashloanToken',
+        'tokenIn',
+        'tokenOut',
+        'token',
+        'receiver',
+        'spender',
+        'onBehalfOf',
+        'account',
+        'sender',
+      ];
+      for (const key of addressKeys) {
+        if (args[key] && typeof args[key] === 'string') {
+          args[key] = checksumAddressSafe(args[key]) || args[key];
+        }
+      }
+      if (Array.isArray(args.callback)) {
+        args.callback = args.callback.map((cb: any) => {
+          if (!cb || typeof cb !== 'object') return cb;
+          const cbItem = { ...cb };
+          if (cbItem.args && typeof cbItem.args === 'object') {
+            const cbArgs = { ...cbItem.args };
+            for (const key of addressKeys) {
+              if (cbArgs[key] && typeof cbArgs[key] === 'string') {
+                cbArgs[key] = checksumAddressSafe(cbArgs[key]) || cbArgs[key];
+              }
+            }
+            cbItem.args = cbArgs;
+          }
+          return cbItem;
+        });
+      }
+      item.args = args;
+    }
+    return item;
+  });
+}
+
 // Direct Enso API call implementation
 async function callDirectEnsoApi(
   payload: EnsoBundlePayload,
@@ -75,6 +134,8 @@ async function callDirectEnsoApi(
 
   const directUrl = `https://api.enso.finance/api/v1/shortcuts/bundle?${params.toString()}`;
 
+  const cleanShortcutsList = cleanShortcuts(payload.shortcuts || []);
+
   // Call query-param style first with shortcuts array in body
   let res = await fetch(directUrl, {
     method: 'POST',
@@ -83,7 +144,7 @@ async function callDirectEnsoApi(
       Authorization: `Bearer ${apiKey.trim()}`,
       Accept: 'application/json',
     },
-    body: JSON.stringify(payload.shortcuts || []),
+    body: JSON.stringify(cleanShortcutsList),
   });
 
   let text = await res.text();
@@ -93,7 +154,7 @@ async function callDirectEnsoApi(
   } catch {}
 
   // If query-param style was not ok, try full body payload
-  if (!res.ok && payload.shortcuts && payload.shortcuts.length > 0) {
+  if (!res.ok && cleanShortcutsList.length > 0) {
     const fallbackRes = await fetch('https://api.enso.finance/api/v1/shortcuts/bundle', {
       method: 'POST',
       headers: {
@@ -107,7 +168,7 @@ async function callDirectEnsoApi(
         receiver,
         spender,
         routingStrategy,
-        shortcuts: payload.shortcuts,
+        shortcuts: cleanShortcutsList,
       }),
     });
 
@@ -251,6 +312,7 @@ export async function buildEnsoBundle(
     fromAddress: checksumAddressSafe(payload.fromAddress) || payload.fromAddress,
     receiver: checksumAddressSafe(payload.receiver || payload.fromAddress) || payload.fromAddress,
     spender: checksumAddressSafe(payload.spender || payload.fromAddress) || payload.fromAddress,
+    shortcuts: cleanShortcuts(payload.shortcuts || []),
   };
 
   const gatewayMode = getGatewayMode();

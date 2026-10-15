@@ -433,20 +433,27 @@ export default function App() {
       });
     }
 
+    const ZERO_CAPITAL_MIN = '1'; // 1 wei, not 0
+    const userAmountIn = isZeroCapital
+      ? ZERO_CAPITAL_MIN
+      : (collWei && collWei !== '0' ? collWei : ZERO_CAPITAL_MIN);
+
+    const flashloanArgs: any = {
+      primaryAddress: checksumAddressSafe(uniPool),
+      flashloanToken: checksumAddressSafe(flashToken),
+      flashloanAmount: flashWei,
+      tokenIn: checksumAddressSafe(collToken),
+      tokenOut: checksumAddressSafe(flashToken),
+      amountIn: userAmountIn,
+      receiver: fromAddr,
+      callback: callbackList,
+    };
+
     const shortcutsList = [
       {
         protocol: 'uniswap-v3',
         action: 'flashloan',
-        args: {
-          primaryAddress: checksumAddressSafe(uniPool),
-          flashloanToken: checksumAddressSafe(flashToken),
-          flashloanAmount: flashWei,
-          tokenIn: checksumAddressSafe(collToken),
-          amountIn: isZeroCapital ? '0' : collWei,
-          tokenOut: checksumAddressSafe(flashToken),
-          receiver: fromAddr,
-          callback: callbackList,
-        },
+        args: flashloanArgs,
       },
     ];
 
