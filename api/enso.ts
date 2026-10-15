@@ -21,22 +21,91 @@ function cleanShortcuts(shortcuts: any[]): any[] {
     if (item.args && typeof item.args === 'object') {
       const args = { ...item.args };
       
-      // Enso API requires amountIn > 0 at action index [0]. If 0, empty, or missing, default to '1' (1 wei) to satisfy Enso validation
-      if (
-        args.amountIn === '0' ||
-        args.amountIn === 0 ||
-        args.amountIn === '' ||
-        !args.amountIn ||
-        (typeof args.amountIn === 'string' && /^0+(\.0+)?$/.test(args.amountIn.trim()))
-      ) {
-        args.amountIn = '1';
+      if (item.protocol === 'uniswap-v3' && item.action === 'flashloan') {
+        // Enso requires tokenIn, amountIn, and tokenId to be arrays of matching length
+        const rawToken = args.tokenIn || args.flashloanToken || args.primaryAddress;
+        if (Array.isArray(rawToken)) {
+          args.tokenIn = rawToken.map((t: any) => checksumAddress(String(t)));
+        } else if (rawToken && typeof rawToken === 'string') {
+          args.tokenIn = [checksumAddress(rawToken)];
+        } else {
+          args.tokenIn = [checksumAddress('0xc2132D05D31c914a87C6611C10748AEb04B58e8F')];
+        }
+
+        const rawAmount = args.amountIn || args.flashloanAmount;
+        if (Array.isArray(rawAmount)) {
+          args.amountIn = rawAmount.map((a: any) => {
+            const s = String(a).trim();
+            return (!s || s === '0' || /^0+(\.0+)?$/.test(s)) ? (args.flashloanAmount ? String(args.flashloanAmount) : '1') : s;
+          });
+        } else if (rawAmount !== undefined && rawAmount !== null) {
+          const s = String(rawAmount).trim();
+          const amt = (!s || s === '0' || /^0+(\.0+)?$/.test(s)) ? (args.flashloanAmount ? String(args.flashloanAmount) : '1') : s;
+          args.amountIn = [amt];
+        } else {
+          args.amountIn = [args.flashloanAmount ? String(args.flashloanAmount) : '1'];
+        }
+
+        if (Array.isArray(args.tokenId)) {
+          args.tokenId = args.tokenId.map((id: any) => String(id));
+        } else if (args.tokenId !== undefined && args.tokenId !== null) {
+          args.tokenId = [String(args.tokenId)];
+        } else {
+          args.tokenId = args.tokenIn.map(() => '0');
+        }
+
+        while (args.amountIn.length < args.tokenIn.length) {
+          args.amountIn.push(args.amountIn[0] || '1');
+        }
+        while (args.tokenId.length < args.tokenIn.length) {
+          args.tokenId.push('0');
+        }
+
+        if (args.tokenOut && typeof args.tokenOut === 'string') {
+          args.tokenOut = checksumAddress(args.tokenOut);
+        } else if (!args.tokenOut && args.tokenIn && args.tokenIn[0]) {
+          args.tokenOut = args.tokenIn[0];
+        }
+
+        if (!args.amountOut && args.amountIn && args.amountIn[0]) {
+          args.amountOut = args.amountIn[0];
+        }
+      } else {
+        // Enso API requires amountIn > 0 at action index [0]. If 0, empty, or missing, default to '1' (1 wei) to satisfy Enso validation
+        if (
+          args.amountIn === '0' ||
+          args.amountIn === 0 ||
+          args.amountIn === '' ||
+          !args.amountIn ||
+          (typeof args.amountIn === 'string' && /^0+(\.0+)?$/.test(args.amountIn.trim()))
+        ) {
+          args.amountIn = '1';
+        }
+
+        // If non-Aave and non-flashloan shortcut has identical tokenIn and tokenOut, remove them to prevent router error
+        if (
+          item.protocol !== 'aave-v3' &&
+          args.tokenIn &&
+          args.tokenOut &&
+          typeof args.tokenIn === 'string' &&
+          typeof args.tokenOut === 'string' &&
+          args.tokenIn.toLowerCase() === args.tokenOut.toLowerCase()
+        ) {
+          delete args.tokenIn;
+          delete args.tokenOut;
+        }
+
+        if (args.tokenIn && typeof args.tokenIn === 'string') {
+          args.tokenIn = checksumAddress(args.tokenIn);
+        }
+        if (args.tokenOut && typeof args.tokenOut === 'string') {
+          args.tokenOut = checksumAddress(args.tokenOut);
+        }
       }
 
       const addressKeys = [
         'primaryAddress',
         'flashloanToken',
-        'tokenIn',
-        'tokenOut',
         'token',
         'receiver',
         'spender',
@@ -55,6 +124,22 @@ function cleanShortcuts(shortcuts: any[]): any[] {
           const cbItem = { ...cb };
           if (cbItem.args && typeof cbItem.args === 'object') {
             const cbArgs = { ...cbItem.args };
+
+            // If callback route has identical tokenIn and tokenOut, convert to balance check to prevent DEX route failure
+            if (
+              cbItem.protocol === 'enso' &&
+              cbItem.action === 'route' &&
+              cbArgs.tokenIn &&
+              cbArgs.tokenOut &&
+              typeof cbArgs.tokenIn === 'string' &&
+              typeof cbArgs.tokenOut === 'string' &&
+              cbArgs.tokenIn.toLowerCase() === cbArgs.tokenOut.toLowerCase()
+            ) {
+              cbItem.action = 'balance';
+              cbItem.args = { token: checksumAddress(cbArgs.tokenIn) };
+              return cbItem;
+            }
+
             for (const key of addressKeys) {
               if (cbArgs[key] && typeof cbArgs[key] === 'string') {
                 cbArgs[key] = checksumAddress(cbArgs[key]);

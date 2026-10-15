@@ -25,6 +25,7 @@ export const BundleVisualizer: React.FC<BundleVisualizerProps> = ({
   loops = 1,
 }) => {
   const isMultiLoop = loops > 1;
+  const isSameToken = flashTokenSymbol.toUpperCase() === collTokenSymbol.toUpperCase();
 
   const steps = [
     {
@@ -37,13 +38,21 @@ export const BundleVisualizer: React.FC<BundleVisualizerProps> = ({
     },
     {
       num: 2,
-      title: isMultiLoop ? `Enso Router: Swap (x${loops} Cycles)` : 'Enso Router: Swap',
-      action: `Convert Flash Asset (Slippage: ${slippage}%)`,
-      detail: isMultiLoop
-        ? `Swaps flashloan asset ${flashTokenSymbol} → ${collTokenSymbol}, repeated on each recursive cycle`
-        : `Swap ${flashAmount} ${flashTokenSymbol} → ${collTokenSymbol} with ${Math.round(slippage * 100)} BPS slippage protection`,
-      icon: Repeat,
-      color: 'text-purple-400 bg-purple-950/40 border-purple-800/60',
+      title: isSameToken
+        ? 'Direct Supply (Same Asset)'
+        : (isMultiLoop ? `Enso Router: Swap (x${loops} Cycles)` : 'Enso Router: Swap'),
+      action: isSameToken
+        ? 'Direct Supply (0% Swap Slippage)'
+        : `Convert Flash Asset (Slippage: ${slippage}%)`,
+      detail: isSameToken
+        ? `Flashloan asset (${flashTokenSymbol}) matches collateral asset directly. No DEX swap needed.`
+        : (isMultiLoop
+            ? `Swaps flashloan asset ${flashTokenSymbol} → ${collTokenSymbol}, repeated on each recursive cycle`
+            : `Swap ${flashAmount} ${flashTokenSymbol} → ${collTokenSymbol} with ${Math.round(slippage * 100)} BPS slippage protection`),
+      icon: isSameToken ? Check : Repeat,
+      color: isSameToken
+        ? 'text-emerald-400 bg-emerald-950/40 border-emerald-800/60'
+        : 'text-purple-400 bg-purple-950/40 border-purple-800/60',
     },
     {
       num: 3,
@@ -59,7 +68,7 @@ export const BundleVisualizer: React.FC<BundleVisualizerProps> = ({
       action: `Deposit Collateral (LTV: ${ltv}%)`,
       detail: isMultiLoop
         ? `Deposits compounded collateral into Aave V3 across ${loops} iterations with zero upfront capital`
-        : `Deposit output of swap into Aave V3 pool as collateral backing`,
+        : `Deposit ${isSameToken ? 'flashloaned funds' : 'output of swap'} into Aave V3 pool as collateral backing`,
       icon: Database,
       color: 'text-sky-400 bg-sky-950/40 border-sky-800/60',
     },

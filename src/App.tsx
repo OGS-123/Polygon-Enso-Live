@@ -325,24 +325,31 @@ export default function App() {
     const flashWei = activeWei.flashWei;
     const collWei = activeWei.collWei;
     const borrowWei = activeWei.borrowWei;
+    const repayWei = activeWei.repayWei;
     const slippageBps = String(Math.round(slippage * 100)); // 0.5% = 50 BPS
 
     const dynamics = calculateLoopingDynamics(flashAmount, ltv, loops, feeTier);
     const callbackList: any[] = [];
 
+    const isSameToken = flashToken.toLowerCase() === collToken.toLowerCase();
+
     // Cycle 1:
-    // Call 0: Route flashloan USDC -> USDT
-    callbackList.push({
-      protocol: 'enso',
-      action: 'route',
-      args: {
-        tokenIn: checksumAddressSafe(flashToken),
-        tokenOut: checksumAddressSafe(collToken),
-        amountIn: flashWei,
-        slippage: slippageBps,
-      },
-    });
-    // Call 1: Check balance of USDT received
+    // Only route/swap if flashToken differs from collToken (swapping same token to itself fails with 'No route found')
+    if (!isSameToken) {
+      callbackList.push({
+        protocol: 'enso',
+        action: 'route',
+        args: {
+          tokenIn: checksumAddressSafe(flashToken),
+          tokenOut: checksumAddressSafe(collToken),
+          amountIn: flashWei,
+          slippage: slippageBps,
+        },
+      });
+    }
+
+    // Call: Check balance of collToken received
+    const collBalIndex = callbackList.length;
     callbackList.push({
       protocol: 'enso',
       action: 'balance',
@@ -350,7 +357,8 @@ export default function App() {
         token: checksumAddressSafe(collToken),
       },
     });
-    // Call 2: Deposit USDT into Aave V3 using output of balance check
+
+    // Call: Deposit collToken into Aave V3 using output of balance check
     callbackList.push({
       protocol: 'aave-v3',
       action: 'deposit',
@@ -358,11 +366,12 @@ export default function App() {
         primaryAddress: checksumAddressSafe(aavePool),
         tokenIn: checksumAddressSafe(collToken),
         tokenOut: checksumAddressSafe(collToken),
-        amountIn: { useOutputOfCallAt: 1 },
+        amountIn: { useOutputOfCallAt: collBalIndex },
         onBehalfOf: fromAddr,
       },
     });
-    // Call 3: Borrow USDC from Aave V3
+
+    // Call: Borrow flashToken from Aave V3
     const cycle1BorrowWei =
       loops === 1 ? borrowWei : toTokenWei(dynamics.iterations[0].borrowAmount, flashTokenMeta.decimals);
     callbackList.push({
@@ -385,19 +394,21 @@ export default function App() {
           ? borrowWei
           : toTokenWei(stepInfo.borrowAmount, flashTokenMeta.decimals);
 
-      // Route borrowed USDC to USDT
-      callbackList.push({
-        protocol: 'enso',
-        action: 'route',
-        args: {
-          tokenIn: checksumAddressSafe(flashToken),
-          tokenOut: checksumAddressSafe(collToken),
-          amountIn: { useOutputOfCallAt: prevBorrowIndex },
-          slippage: slippageBps,
-        },
-      });
+      // Route borrowed flashToken to collToken ONLY if different tokens
+      if (!isSameToken) {
+        callbackList.push({
+          protocol: 'enso',
+          action: 'route',
+          args: {
+            tokenIn: checksumAddressSafe(flashToken),
+            tokenOut: checksumAddressSafe(collToken),
+            amountIn: { useOutputOfCallAt: prevBorrowIndex },
+            slippage: slippageBps,
+          },
+        });
+      }
 
-      // Check balance of USDT
+      // Check balance of collToken
       const balIndex = callbackList.length;
       callbackList.push({
         protocol: 'enso',
@@ -407,7 +418,7 @@ export default function App() {
         },
       });
 
-      // Deposit USDT into Aave V3
+      // Deposit collToken into Aave V3
       callbackList.push({
         protocol: 'aave-v3',
         action: 'deposit',
@@ -420,7 +431,7 @@ export default function App() {
         },
       });
 
-      // Borrow USDC from Aave V3
+      // Borrow flashToken from Aave V3
       callbackList.push({
         protocol: 'aave-v3',
         action: 'borrow',
@@ -442,9 +453,11 @@ export default function App() {
       primaryAddress: checksumAddressSafe(uniPool),
       flashloanToken: checksumAddressSafe(flashToken),
       flashloanAmount: flashWei,
-      tokenIn: checksumAddressSafe(collToken),
+      tokenIn: [checksumAddressSafe(flashToken)],
+      amountIn: [flashWei],
+      tokenId: ['0'],
       tokenOut: checksumAddressSafe(flashToken),
-      amountIn: userAmountIn,
+      amountOut: repayWei,
       receiver: fromAddr,
       callback: callbackList,
     };
@@ -516,6 +529,12 @@ export default function App() {
       'info',
       `Building bundle: Flashloan=${flashAmount} ${flashTokenMeta.symbol}, Final Collateral=${dynamics.totalCollateral.toFixed(4)}, Final Debt=${dynamics.totalBorrowDebt.toFixed(4)}, Zero Capital=${isZeroCapital ? 'Yes' : 'No'}...`
     );
+    if (flashToken.toLowerCase() === collToken.toLowerCase()) {
+      addLog(
+        'info',
+        `⚡ Same-token mode active (${flashTokenMeta.symbol}): Direct collateral supply without DEX swap (zero swap slippage).`
+      );
+    }
 
     try {
       const response = await buildEnsoBundle(currentBundlePayload, apiKey);
