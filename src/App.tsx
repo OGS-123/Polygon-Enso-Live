@@ -455,7 +455,6 @@ export default function App() {
       flashloanAmount: flashWei,
       tokenIn: [checksumAddressSafe(flashToken)],
       amountIn: [flashWei],
-      tokenId: ['0'],
       tokenOut: checksumAddressSafe(flashToken),
       amountOut: repayWei,
       receiver: fromAddr,

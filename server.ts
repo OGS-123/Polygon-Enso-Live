@@ -71,19 +71,14 @@ function cleanShortcuts(shortcuts: any[]): any[] {
           args.amountIn = [args.flashloanAmount ? String(args.flashloanAmount) : '1'];
         }
 
-        if (Array.isArray(args.tokenId)) {
-          args.tokenId = args.tokenId.map((id: any) => String(id));
-        } else if (args.tokenId !== undefined && args.tokenId !== null) {
-          args.tokenId = [String(args.tokenId)];
-        } else {
-          args.tokenId = args.tokenIn.map(() => '0');
-        }
-
         while (args.amountIn.length < args.tokenIn.length) {
           args.amountIn.push(args.amountIn[0] || '1');
         }
-        while (args.tokenId.length < args.tokenIn.length) {
-          args.tokenId.push('0');
+
+        // Enso rule: "provide either amountIn or tokenId for tokenIn, not both".
+        // For ERC20 flashloans, amountIn is required and tokenId must NOT be sent.
+        if (args.amountIn && args.amountIn.length > 0) {
+          delete args.tokenId;
         }
 
         if (args.tokenOut && typeof args.tokenOut === 'string') {
